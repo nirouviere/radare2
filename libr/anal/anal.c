@@ -70,6 +70,7 @@ R_API RAnal *r_anal_new() {
 	anal->split = R_TRUE; // used from core
 	anal->syscall = r_syscall_new ();
 	r_io_bind_init (anal->iob);
+	r_flag_bind_init (anal->flb);
 	anal->reg = r_reg_new ();
 	anal->lineswidth = 0;
 	anal->fcns = r_anal_fcn_list_new ();
@@ -209,7 +210,7 @@ R_API char *r_anal_strmask (RAnal *anal, const char *data) {
 	}
 	len = r_hex_str2bin (data, buf);
 	while (idx < len) {
-		if ((oplen = r_anal_op (anal, op, 0, buf+idx, len-idx)) == 0)
+		if ((oplen = r_anal_op (anal, op, 0, buf+idx, len-idx)) <1)
 			break;
 		switch (op->type) {
 		case R_ANAL_OP_TYPE_CALL:

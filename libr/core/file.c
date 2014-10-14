@@ -10,12 +10,6 @@ static int r_core_file_do_load_for_io_plugin (RCore *r, ut64 baseaddr, ut64 load
 //static int r_core_file_do_load_for_hex (RCore *r, ut64 baddr, ut64 loadaddr, const char *filenameuri);
 
 
-R_API ut64 r_core_file_resize(struct r_core_t *core, ut64 newsize) {
-	if (newsize==0 && core->file)
-		return core->file->size;
-	return 0LL;
-}
-
 // TODO: add support for args
 R_API int r_core_file_reopen(RCore *core, const char *args, int perm) {
 	int isdebug = r_config_get_i (core->config, "cfg.debug");
@@ -26,7 +20,7 @@ R_API int r_core_file_reopen(RCore *core, const char *args, int perm) {
 	RBinFile *bf = (ofile && ofile->desc) ?
 		r_bin_file_find_by_fd (core->bin, ofile->desc->fd) : NULL;
 	RIODesc *odesc = ofile ? ofile->desc : NULL;
-	char *ofilepath = ofile ? strdup (ofile->uri) : NULL;
+	char *ofilepath = odesc ? strdup (odesc->uri) : NULL;
 	char *obinfilepath = bf ? strdup (bf->file) : NULL;
 	int newpid, ret = R_FALSE;
 	if (r_sandbox_enable (0)) {
@@ -175,30 +169,29 @@ R_API char *r_core_sysenv_begin(RCore *core, const char *cmd) {
 	BYTES       hexpairs of current block
 	BLOCK       temporally file with contents of current block
 #endif
-	if (!core->file)
-		return NULL;
 	ret = strdup (cmd);
-	if (strstr (cmd, "BLOCK")) {
-		// replace BLOCK in RET string
-		if ((f = r_file_temp ("r2block"))) {
-			if (r_file_dump (f, core->block, core->blocksize))
-				r_sys_setenv ("BLOCK", f);
-			free (f);
-		}
-	}
 	if (strstr (cmd, "BYTES")) {
 		char *s = r_hex_bin2strdup (core->block, core->blocksize);
 		r_sys_setenv ("BYTES", s);
 		free (s);
 	}
-	if (core->file->desc && core->file->desc->name)
+	if (core->file && core->file->desc && core->file->desc->name) {
 		r_sys_setenv ("FILE", core->file->desc->name);
+		snprintf (buf, sizeof (buf), "%"PFMT64d, r_io_desc_size (core->io, core->file->desc));
+		r_sys_setenv ("SIZE", buf);
+		if (strstr (cmd, "BLOCK")) {
+			// replace BLOCK in RET string
+			if ((f = r_file_temp ("r2block"))) {
+				if (r_file_dump (f, core->block, core->blocksize))
+					r_sys_setenv ("BLOCK", f);
+				free (f);
+			}
+		}
+	}
 	snprintf (buf, sizeof (buf), "%"PFMT64d, core->offset);
 	r_sys_setenv ("OFFSET", buf);
 	snprintf (buf, sizeof (buf), "0x%08"PFMT64x, core->offset);
 	r_sys_setenv ("XOFFSET", buf);
-	snprintf (buf, sizeof (buf), "%"PFMT64d, core->file->size);
-	r_sys_setenv ("SIZE", buf);
 	r_sys_setenv ("ENDIAN", core->assembler->big_endian?"big":"little");
 	snprintf (buf, sizeof (buf), "%d", core->blocksize);
 	r_sys_setenv ("BSIZE", buf);
@@ -479,11 +472,11 @@ R_API RIOMap *r_core_file_get_next_map (RCore *core, RCoreFile * fh, int mode, u
 	ut64 load_align = r_config_get_i (core->config, "file.loadalign");
 	RIOMap *map = NULL;
 	if (!strcmp (loadmethod, "overwrite"))
-		map = r_io_map_new (core->io, fh->desc->fd, mode, 0, loadaddr, fh->size);
+		map = r_io_map_new (core->io, fh->desc->fd, mode, 0, loadaddr, r_io_desc_size (core->io, fh->desc));
 	if (!strcmp (loadmethod, "fail"))
-		map = r_io_map_add (core->io, fh->desc->fd, mode, 0, loadaddr, fh->size);
+		map = r_io_map_add (core->io, fh->desc->fd, mode, 0, loadaddr, r_io_desc_size (core->io, fh->desc));
 	if (!strcmp (loadmethod, "append") && load_align)
-		map = r_io_map_add_next_available (core->io, fh->desc->fd, mode, 0, loadaddr, fh->size, load_align);
+		map = r_io_map_add_next_available (core->io, fh->desc->fd, mode, 0, loadaddr, r_io_desc_size (core->io, fh->desc), load_align);
 	if (!strcmp (suppress_warning, "false")) {
 		if (!map)
 			eprintf ("r_core_file_get_next_map: Unable to load specified file to 0x%08"PFMT64x"\n", loadaddr);
@@ -539,13 +532,10 @@ R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int mode, ut6
 		}
 		fh->alive = 1;
 		fh->core = r;
-		fh->uri = strdup (file);
 		fh->desc = fd;
-		fh->size = r_io_desc_size (r->io, fd);
 		fh->rwx = mode;
 		r->file = fh;
 		r->io->plugin = fd->plugin;
-		fh->size = r_io_size (r->io);
 		// XXX - load addr should be at a set offset
 		fh->map = r_core_file_get_next_map (r, fh, mode, current_loadaddr);
 
@@ -574,7 +564,7 @@ R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int mode, ut6
 	if (cp && *cp) r_core_cmd (r, cp, 0);
 
 	r_config_set (r->config, "file.path", top_file->desc->name);
-	r_config_set_i (r->config, "zoom.to", top_file->map->from+top_file->size);
+	r_config_set_i (r->config, "zoom.to", top_file->map->from + r_io_desc_size (r->io, top_file->desc));
 	if (loadmethod) r_config_set (r->config, "file.loadmethod", loadmethod);
 	free (loadmethod);
 
@@ -622,11 +612,8 @@ R_API RCoreFile *r_core_file_open(RCore *r, const char *file, int mode, ut64 loa
 	}
 	fh->alive = 1;
 	fh->core = r;
-	fh->uri = strdup (file);
 	fh->desc = fd;
-	fh->size = r_io_desc_size (r->io, fd);
 	fh->rwx = mode;
-	fh->size = r_io_size (r->io);
 
 	cp = r_config_get (r->config, "cmd.open");
 	if (cp && *cp)
@@ -644,7 +631,7 @@ R_API RCoreFile *r_core_file_open(RCore *r, const char *file, int mode, ut64 loa
 	r_bin_bind (r->bin, &(fh->binb));
 	r_list_append (r->files, fh);
 	r_core_file_set_by_file (r, fh);
-	r_config_set_i (r->config, "zoom.to", fh->map->from+fh->size);
+	r_config_set_i (r->config, "zoom.to", fh->map->from + r_io_desc_size (r->io, fh->desc));
 	return fh;
 }
 
@@ -667,9 +654,7 @@ R_API void r_core_file_free(RCoreFile *cf) {
 		cf->desc = NULL;
 		cf->map = NULL;
 
-		free (cf->uri);
 		r_bin_file_deref_by_bind (&cf->binb);
-		cf->uri = NULL;
 		memset (cf, 0, sizeof (RCoreFile));
 		free (cf);
 	}
@@ -731,9 +716,9 @@ R_API int r_core_file_list(RCore *core) {
 		if (f->map)
 			r_cons_printf ("%c %d %s @ 0x%"PFMT64x" ; %s\n",
 				core->io->raised == f->desc->fd?'*':'-',
-				f->desc->fd, f->uri, f->map->from,
+				f->desc->fd, f->desc->uri, f->map->from,
 				f->desc->flags & R_IO_WRITE? "rw": "r");
-		else r_cons_printf ("- %d %s\n", f->desc->fd, f->uri);
+		else r_cons_printf ("- %d %s\n", f->desc->fd, f->desc->uri);
 		count++;
 	}
 	return count;
@@ -770,7 +755,7 @@ R_API int r_core_file_binlist(RCore *core) {
 		if (cf && cf->map) {
 			r_cons_printf ("%c %d %s @ 0x%"PFMT64x" ; %s\n",
 				core->io->raised == cf->desc->fd?'*':'-',
-				fd, cf->uri, cf->map->from,
+				fd, cf->desc->uri, cf->map->from,
 				cf->desc->flags & R_IO_WRITE? "rw": "r");
 		}
 	}
@@ -798,14 +783,15 @@ R_API int r_core_file_close_fd(RCore *core, int fd) {
 R_API int r_core_hash_load(RCore *r, const char *file) {
 	const ut8 *md5, *sha1;
 	char hash[128], *p;
-	int i, buf_len = 0;
+	int i;
+	int buf_len = 0;
 	ut8 *buf = NULL;
 	RHash *ctx;
 	ut64 limit;
 	RCoreFile *cf = r_core_file_cur (r);
 
 	limit = r_config_get_i (r->config, "cfg.hashlimit");
-	if (cf->size > limit)
+	if (r_io_desc_size (r->io, cf->desc) > limit)
 		return R_FALSE;
 	buf = (ut8*)r_file_slurp (file, &buf_len);
 	if (buf==NULL)

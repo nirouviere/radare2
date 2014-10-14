@@ -33,9 +33,9 @@ static void print_format_help(RPrint *p) {
 	//" D - double (8 bytes)\n"
 	" f - float value (4 bytes)\n"
 	" b - byte (unsigned)\n"
-	" B - resolve enum bitfield (see t?)\n" // B must be for binary ??
+	" B - resolve enum bitfield (see t?) `pf B (Foo)type`\n" // B must be for binary ??
 	" c - char (signed byte)\n"
-	" E - resolve enum name `pf E (Foo)type`\n" // B must be for binary ??
+	" E - resolve enum name  (see t?) `pf E (Foo)type`\n"
 	" X - show n hexpairs (default n=1)"
 	" i - %%i integer value (4 bytes)\n"
 	" w - word (2 bytes unsigned short in hex)\n"
@@ -52,6 +52,7 @@ static void print_format_help(RPrint *p) {
 	" s - 32bit pointer to string (4 bytes)\n"
 	" S - 64bit pointer to string (8 bytes)\n"
 	//" t - unix timestamp string\n"
+	" ? - data structure `pf ? (struct_type)struct_name`\n"
 	" * - next char is pointer (honors asm.bits)\n"
 	" + - toggle show flags for each offset\n"
 	" : - skip 4 bytes\n"
@@ -367,12 +368,14 @@ static void r_print_format_word(const RPrint* p, int endian, int mustset,
 }
 
 // XXX: this is very incomplete. must be updated to handle all format chars
-static int computeStructSize(char *fmt) {
-	char *end = strchr(fmt, ' ');
-	int size = 0, i;
+static int computeStructSize(char *fmt, RPrint *p) {
+	char *end = strchr(fmt, ' '), *args;
+	int size = 0, i, idx=0;
 	if (!end)
 		return -1;
 	*end = 0;
+	args = strdup (end+1);
+	r_str_word_set0 (args);
 	for (i=0; i<strlen(fmt); i++) {
 		switch (fmt[i]) {
 			case 'f':
@@ -409,12 +412,31 @@ static int computeStructSize(char *fmt) {
 				size += 4;
 				i++;
 				break;
+			case '?':
+				{
+				char *endname = NULL, *format = NULL, *structname = NULL;
+				structname = strdup(r_str_word_get0 (args, idx));
+				if (*structname == '(') {
+					endname = strchr (structname, ')');
+				} else {
+					eprintf ("Struct name missing (%s)\n", structname);
+					free(structname);
+					break;
+				}
+				if (endname!=NULL) *endname = '\0';
+				format = strdup(r_strht_get (p->formats, structname+1));
+				size += computeStructSize (format, p);
+				free (structname);
+				break;
+				}
 				// TODO continue list
 			default:
 				break;
 		}
+		idx++;
 	}
-	free(fmt);
+	free (args);
+	free (fmt);
 	return size;
 }
 
@@ -432,7 +454,7 @@ static int r_print_format_struct(RPrint* p, ut64 seek, const ut8* b, int len, ch
 		return 0;
 	}
 	r_print_format (p, seek, b, len, fmt, flag, NULL);
-	return computeStructSize(strdup(fmt));
+	return computeStructSize(strdup(fmt), p);
 }
 
 R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
@@ -787,7 +809,7 @@ R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
 				if (*structname == '(') {
 					name = strchr (structname, ')');
 				} else {
-					eprintf ("Struct name missing (%s)\n", structname);
+					eprintf ("Bitfield name missing (%s)\n", structname);
 					free (structname);
 					goto beach;
 				}
@@ -821,7 +843,7 @@ R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
 				if (*enumname == '(') {
 					name = strchr (enumname, ')');
 				} else {
-					eprintf ("Struct name missing (%s)\n", enumname);
+					eprintf ("Enum name missing (%s)\n", enumname);
 					free (enumname);
 					goto beach;
 				}
@@ -837,7 +859,7 @@ R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
 					p->printf (" %s (enum) = `te %s 0x%x`\n",
 						name, enumname, addr);
 				}
-				i+= 4; //(isptr) ? 4 : s;
+				i+= (size==-1) ? 1 : size;
 				free (osn);
 				free (enumvalue);
 				}

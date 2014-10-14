@@ -114,7 +114,7 @@ static int cb_asmarch(void *user, void *data) {
 
 	if (*node->value=='?') {
 		rasm2_list (core, NULL);
-		return 0;
+		return R_FALSE;
 	}
 	r_egg_setup (core->egg, node->value, core->anal->bits, 0, R_SYS_OS);
 	if (*node->value) {
@@ -122,7 +122,7 @@ static int cb_asmarch(void *user, void *data) {
 			eprintf ("asm.arch: cannot find (%s)\n", node->value);
 			return R_FALSE;
 		}
-	} else return 0;
+	} else return R_FALSE;
 
 	snprintf (asmparser, sizeof (asmparser), "%s.pseudo", node->value);
 	r_config_set (core->config, "asm.parser", asmparser);
@@ -138,7 +138,10 @@ static int cb_asmarch(void *user, void *data) {
 		char *p, *s = strdup (node->value);
 		p = strchr (s, '.');
 		if (p) *p = 0;
-		r_config_set (core->config, "anal.arch", s);
+		if (!r_config_set (core->config, "anal.arch", s)) {
+			/* fall back to the anal.null plugin */
+			r_config_set (core->config, "anal.arch", "null");
+		}
 		free (s);
 	}
 	if (!r_syscall_setup (core->anal->syscall, node->value,
@@ -149,6 +152,13 @@ static int cb_asmarch(void *user, void *data) {
 	//if (!strcmp (node->value, "bf"))
 	//	r_config_set (core->config, "dbg.backend", "bf");
 	__setsegoff (core->config, node->value, core->assembler->bits);
+	return R_TRUE;
+}
+
+static int cb_dbgbpsize(void *user, void *data) {
+	RCore *core = (RCore *) user;
+	RConfigNode *node = (RConfigNode *) data;
+	core->dbg->bpsize = node->i_value;
 	return R_TRUE;
 }
 
@@ -553,6 +563,12 @@ static int cb_scrhtml(void *user, void *data) {
 	return R_TRUE;
 }
 
+static int cb_scrhighlight(void *user, void *data) {
+	RConfigNode *node = (RConfigNode *) data;
+	r_cons_highlight (node->value);
+	return R_TRUE;
+}
+
 static int cb_scrint(void *user, void *data) {
 	RConfigNode *node = (RConfigNode *) data;
 	r_cons_singleton()->is_interactive = node->i_value;
@@ -822,6 +838,10 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF("dir.types", "/usr/include", "Default path to look for cparse type files");
 	SETPREF("dir.projects", "~/"R2_HOMEDIR"/projects", "Default path for projects");
 
+	SETPREF("stack.anotated", "false", "Show anotated hexdump in visual debug");
+	SETI("stack.size", 64,  "Define size of anotated hexdump in visual debug");
+	SETI("stack.delta", 0,  "Define a delta for the stack dump");
+
 	SETCB("dbg.profile", "", &cb_runprofile, "Path to RRunProfile file");
 	/* debug */
 	SETCB("dbg.status", "false", &cb_dbgstatus, "Set cmd.prompt to '.dr*' or '.dr*;drd;sr pc;pi 1;s-'");
@@ -833,6 +853,12 @@ R_API int r_core_config_init(RCore *core) {
 	r_config_desc (cfg, "dbg.follow", "Follow program counter when pc > core->offset + dbg.follow");
 	SETCB("dbg.stopthreads", "true", &cb_stopthreads, "Stop all threads when debugger breaks");
 	SETCB("dbg.swstep", "false", &cb_swstep, "If enabled forces the use of software steps (code analysis+breakpoint)");
+// TODO: This should be specified at first by the debug backend when attaching
+#if __arm__ || __mips__
+	SETICB("dbg.bpsize", 4, &cb_dbgbpsize, "Specify size of software breakpoints");
+#else
+	SETICB("dbg.bpsize", 1, &cb_dbgbpsize, "Specify size of software breakpoints");
+#endif
 	SETCB("dbg.trace", "false", &cb_trace, "Trace program execution (see asm.trace)");
 	SETCB("dbg.trace.tag", "0xff", &cb_tracetag, "Set trace tag");
 
@@ -856,6 +882,7 @@ R_API int r_core_config_init(RCore *core) {
 	r_config_desc (cfg, "cmd.graph", "Command executed by 'agv' command to view graphs");
 	SETICB("cmd.depth", 10, &cb_cmddepth, "Maximum command depth");
 	SETPREF("cmd.bp", "", "Command to executed every breakpoint hit");
+	SETPREF("cmd.stack", "", "Command to display the stack in visual debug mode");
 	SETPREF("cmd.cprompt", "", "Column visual prompt commands");
 	SETPREF("cmd.hit", "", "Command to execute on every search hit");
 	SETPREF("cmd.open", "", "Command executed when file its opened");
@@ -869,6 +896,7 @@ R_API int r_core_config_init(RCore *core) {
 
 	/* hexdump */
 	SETCB("hex.pairs", "true", &cb_hexpairs, "Show bytes paired in 'px' hexdump");
+	SETI("hex.flagsz", 0, "if != 0 overrides the flag size in pxa");
 	SETICB("hex.cols", 16, &cb_hexcols, "Configure the number of columns in hexdump");
 	SETICB("hex.stride", 0, &cb_hexstride, "Define the line stride in hexdump (default is 0)");
 
@@ -939,7 +967,9 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB("scr.fps", "false", &cb_fps, "Show FPS indicator in Visual");
 	SETICB("scr.fix_rows", 0, &cb_fixrows, "Workaround for Linux TTY");
 	SETICB("scr.fix_columns", 0, &cb_fixcolumns, "Workaround for Prompt iOS ssh client");
+	SETCB("scr.highlight", "", &cb_scrhighlight, "Highligh that word at RCons level");
 	SETCB("scr.interactive", "true", &cb_scrint, "Start in interractive mode");
+	SETI("scr.feedback", 1, "Set visual feedback level (1=arrow on jump, 2=every key (useful for videos))");
 	SETCB("scr.html", "false", &cb_scrhtml, "If enabled disassembly uses HTML syntax");
 	SETCB("scr.nkey", "hit", &cb_scrnkey, "Select the seek mode in visual");
 	SETCB("scr.pager", "", &cb_pager, "Select pager program (used if output doesn't fit on window)");

@@ -18,7 +18,7 @@ static Sdb* get_sdb (RBinObject *o) {
 static void * load_bytes(const ut8 *buf, ut64 sz, ut64 loadaddr, Sdb *sdb){
 	check_bytes (buf, sz);
 	// XXX: this may be wrong if check_bytes is true
-	return NULL;
+	return R_NOTNULL;
 }
 
 static int load(RBinFile *arch) {
@@ -105,7 +105,8 @@ static RList* entries(RBinFile *arch) {
 	ret->free = free;
 	if (!(ptr = R_NEW0 (RBinAddr)))
 		return ret;
-	ptr->paddr = ptr->vaddr = 0xffff0;
+	ptr->paddr = 0x70000;
+	ptr->vaddr = 0xffff0;
 	r_list_append (ret, ptr);
 	return ret;
 }

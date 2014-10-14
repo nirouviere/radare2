@@ -73,9 +73,7 @@ typedef struct r_core_log_t {
 } RCoreLog;
 
 typedef struct r_core_file_t {
-	char *uri;
 	ut64 seek;
-	ut64 size;
 	RIOMap *map;
 	int rwx;
 	int dbg;

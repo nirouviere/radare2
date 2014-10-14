@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2008-2013 - pancake */
+/* radare - LGPL - Copyright 2008-2014 - pancake */
 
 #include <r_cons.h>
 #include <ctype.h>
@@ -20,6 +20,8 @@ R_API char *r_cons_hud_file(const char *f) {
 	if (s) {
 		char *ret = r_cons_hud_string (s);
 		free (s);
+		if (!ret)
+			ret = strdup ("");
 		return ret;
 	}
 	return NULL;
@@ -143,9 +145,11 @@ R_API char *r_cons_hud(RList *list, const char *prompt) {
 			buf[--i] = 0;
 			break;
 		default:
-			choose = 0;
-			buf[i++] = ch;
-			buf[i] = 0;
+			if (IS_PRINTABLE (ch)) {
+				choose = 0;
+				buf[i++] = ch;
+				buf[i] = 0;
+			}
 			break;
 		}
 	}

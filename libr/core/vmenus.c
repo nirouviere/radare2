@@ -809,7 +809,7 @@ R_API void r_core_visual_mounts (RCore *core) {
 				if (mode == 2) {
 					if (!root) {
 						mode = 0;
-					} else 
+					} else
 					if (strcmp (path, root)) {
 						strcat (path, "/..");
 						r_str_chop_path (path);
@@ -997,7 +997,7 @@ static ut64 r_core_visual_anal_refresh (RCore *core) {
 	if (!core) return 0LL;
 	old[0]='\0';
 	addr = core->offset;
-	fcn = r_anal_fcn_find (core->anal, addr, R_ANAL_FCN_TYPE_NULL);
+	fcn = r_anal_get_fcn_in (core->anal, addr, R_ANAL_FCN_TYPE_NULL);
 
 	cols -= 50;
 	if (cols > 60) cols = 60;
@@ -1251,7 +1251,7 @@ R_API void r_core_visual_define (RCore *core) {
 	{
 		int h;
 		(void)r_cons_get_size (&h);
-		h-=18;
+		h-=19;
 		if (h<0) {
 			r_cons_clear00 ();
 		} else {
@@ -1269,6 +1269,7 @@ R_API void r_core_visual_define (RCore *core) {
 		," e    end of function"
 		," f    analyze function"
 		," F    format"
+		," h    highlight word"
 		," q    quit/cancel operation"
 		," r    rename function"
 		," s    set string"
@@ -1371,9 +1372,9 @@ R_API void r_core_visual_define (RCore *core) {
 	case 'e':
 		// set function size
 		{
-		RAnalFunction *fcn = r_anal_fcn_find (core->anal, off, 0);
+		RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, off, 0);
 		if (!fcn) {
-			fcn = r_anal_fcn_find (core->anal, core->offset, 0);
+			fcn = r_anal_get_fcn_in (core->anal, core->offset, 0);
 		}
 		if (fcn) {
 			RAnalOp op;
@@ -1391,6 +1392,9 @@ R_API void r_core_visual_define (RCore *core) {
 		}
 		}
 		break;
+	case 'h':
+		r_core_cmd0 (core, "?i highlight;e scr.highlight=`?y`");
+		break;
 	case 'r':
 		r_core_cmd0 (core, "?i new function name;afn `?y`");
 		break;
@@ -1400,7 +1404,7 @@ R_API void r_core_visual_define (RCore *core) {
 			name = malloc (n+10);
 			strcpy (name, "str.");
 			strncpy (name+4, (const char *)p+ntotal, n);
-			r_flag_set (core->flags, name, off, n, 0);
+			r_flag_set (core->flags, name, off+ntotal, n, 0);
 			r_meta_add (core->anal, R_META_TYPE_STRING,
 				off+ntotal, off+n+ntotal, (const char *)p+ntotal);
 			free (name);
@@ -1430,7 +1434,7 @@ R_API void r_core_visual_define (RCore *core) {
 		r_core_anal_undefine (core, off);
 #if 0
 		r_flag_unset_i (core->flags, off, NULL);
-		f = r_anal_fcn_find (core->anal, off, 0);
+		f = r_anal_get_fcn_in (core->anal, off, 0);
 		r_anal_fcn_del_locs (core->anal, off);
 		if (f) r_meta_del (core->anal, R_META_TYPE_ANY, off, f->size, "");
 		r_anal_fcn_del (core->anal, off);
@@ -1438,8 +1442,8 @@ R_API void r_core_visual_define (RCore *core) {
 		break;
 	case 'f':
 		{
-			RAnalFunction *fcn = r_anal_get_fcn_at (core->anal, core->offset);
-			if (fcn) 
+			RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, core->offset, 0);
+			if (fcn)
 				r_anal_fcn_resize (fcn, core->offset - fcn->addr);
 		}
 		{
@@ -1456,7 +1460,7 @@ R_API void r_core_visual_define (RCore *core) {
 				R_ANAL_REF_TYPE_NULL, depth);
 			r_cons_break_end ();
 			if (funsize) {
-				RAnalFunction *f = r_anal_fcn_find (core->anal, off, -1);
+				RAnalFunction *f = r_anal_get_fcn_in (core->anal, off, -1);
 				if (f) f->size = funsize;
 			}
 		}

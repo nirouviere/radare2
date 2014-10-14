@@ -30,7 +30,7 @@ static int core_cmd_callback (void *user, const char *cmd) {
 }
 
 static ut64 getref (RCore *core, int n, char t, int type) {
-	RAnalFunction *fcn = r_anal_fcn_find (core->anal, core->offset, 0);
+	RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, core->offset, 0);
 	RListIter *iter;
 	RAnalRef *r;
 	RList *list;
@@ -135,7 +135,7 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 		case 'v': return op.val; // immediate value
 		case 'l': return op.size;
 		case 'b': return core->blocksize;
-		case 's': return core->file->size;
+		case 's': return r_io_desc_size (core->io, core->file->desc);
 		case 'w': return r_config_get_i (core->config, "asm.bits") / 8;
 		case 'S':
 			s = r_io_section_vget (core->io, core->offset);
@@ -153,10 +153,10 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 		case 'X': return getref (core, atoi (str+2), 'x',
 				R_ANAL_REF_TYPE_CALL);
 		case 'I':
-			fcn = r_anal_fcn_find (core->anal, core->offset, 0);
+			fcn = r_anal_get_fcn_in (core->anal, core->offset, 0);
 			return fcn? fcn->ninstr: 0;
 		case 'F':
-			fcn = r_anal_fcn_find (core->anal, core->offset, 0);
+			fcn = r_anal_get_fcn_in (core->anal, core->offset, 0);
 			return fcn? fcn->size: 0;
 		}
 	} else
@@ -387,7 +387,7 @@ static int autocomplete(RLine *line) {
 			if (keys) {
 				int i, j;
 				for (i=j=0; i<count; i++) {
-					if (!memcmp (keys[i], data, line->buffer.index)) {
+					if (!strncmp (keys[i], data, line->buffer.index)) {
 						tmp_argv[j++] = keys[i];
 					}
 				}
@@ -399,8 +399,8 @@ static int autocomplete(RLine *line) {
 				line->completion.argv = NULL;
 			}
 		} else
-		if ( (!memcmp (line->buffer.data, "e ", 2))
-		   ||(!memcmp (line->buffer.data, "e? ", 3))) {
+		if ( (!strncmp (line->buffer.data, "e ", 2))
+		   ||(!strncmp (line->buffer.data, "e? ", 3))) {
 			int m = (line->buffer.data[1] == '?')? 3: 2;
 			int i = 0, n = strlen (line->buffer.data+m);
 			RConfigNode *bt;
@@ -418,7 +418,7 @@ static int autocomplete(RLine *line) {
 		} else {
 			int i, j;
 			for (i=j=0; radare_argv[i] && i<CMDS; i++)
-				if (!memcmp (radare_argv[i], line->buffer.data,
+				if (!strncmp (radare_argv[i], line->buffer.data,
 						line->buffer.index))
 					tmp_argv[j++] = radare_argv[i];
 			tmp_argv[j] = NULL;
@@ -652,6 +652,8 @@ R_API int r_core_init(RCore *core) {
 	core->search = r_search_new (R_SEARCH_KEYWORD);
 	r_io_undo_enable (core->io, 1, 0); // TODO: configurable via eval
 	core->fs = r_fs_new ();
+	core->flags = r_flag_new ();
+
 	r_bin_bind (core->bin, &(core->assembler->binb));
 	r_bin_bind (core->bin, &(core->anal->binb));
 	r_bin_bind (core->bin, &(core->anal->binb));
@@ -661,13 +663,13 @@ R_API int r_core_init(RCore *core) {
 	r_io_bind (core->io, &(core->anal->iob));
 	r_io_bind (core->io, &(core->fs->iob));
 	r_io_bind (core->io, &(core->bin->iob));
+	r_flag_bind (core->flags, &(core->anal->flb));
 
 	core->file = NULL;
 	core->files = r_list_new ();
 	core->files->free = (RListFree)r_core_file_free;
 	core->offset = 0LL;
 	r_core_cmd_init (core);
-	core->flags = r_flag_new ();
 	core->dbg = r_debug_new (R_TRUE);
 	core->dbg->graph->printf = (PrintfCallback)r_cons_printf;
 	core->dbg->printf = (PrintfCallback)r_cons_printf;
@@ -748,7 +750,7 @@ R_API RCore *r_core_free(RCore *c) {
 
 R_API void r_core_prompt_loop(RCore *r) {
 	int ret;
-	do { 
+	do {
 		if (r_core_prompt (r, R_FALSE)<1)
 			break;
 //			if (lock) r_th_lock_enter (lock);
@@ -985,7 +987,7 @@ reaccept:
 					if (file) {
 						r_core_bin_load (core, NULL, baddr);
 						file->map = r_io_map_add (core->io, file->desc->fd,
-							R_IO_READ, 0, 0, file->size);
+							R_IO_READ, 0, 0, r_io_desc_size (core->io, file->desc));
 						pipefd = core->file->desc->fd;
 						eprintf ("(flags: %d) len: %d filename: '%s'\n",
 							flg, cmd, ptr); //config.file);
@@ -1145,7 +1147,7 @@ reaccept:
 				if (buf[0]!=2) {
 					r_core_seek (core, x, buf[0]);
 					x = core->offset;
-				} else x = core->file->size;
+				} else x = r_io_desc_size (core->io, core->file->desc);
 				buf[0] = RMT_SEEK | RMT_REPLY;
 				r_mem_copyendian (buf+1, (ut8*)&x, 8, !LE);
 				r_socket_write (c, buf, 9);

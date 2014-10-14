@@ -558,12 +558,12 @@ if (strcmp (argv[1], "--")) {
 	if (seek != UT64_MAX)
 		r_core_seek (&r, seek, 1);
 
-	if (fullfile) r_core_block_size (&r, r.file->size);
+	if (fullfile) r_core_block_size (&r, r_io_desc_size (r.io, r.file->desc));
 
 	r_core_seek (&r, r.offset, 1); // read current block
 
 	/* check if file.sha1 has changed */
-	if (!strstr (r.file->uri, "://")) {
+	if (!strstr (r.file->desc->uri, "://")) {
 		const char *npath, *nsha1;
 		char *path = strdup (r_config_get (r.config, "file.path"));
 		char *sha1 = strdup (r_config_get (r.config, "file.sha1"));

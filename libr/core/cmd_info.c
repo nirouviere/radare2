@@ -46,11 +46,11 @@ static void r_core_file_info (RCore *core, int mode) {
 		if (dbg) dbg = R_IO_WRITE | R_IO_EXEC;
 		if (cf->desc)
 			r_cons_printf (",\"fd\":%d", cf->desc->fd);
-		r_cons_printf (",\"size\":%"PFMT64d, cf->size);
+		r_cons_printf (",\"size\":%"PFMT64d, r_io_desc_size (core->io, cf->desc));
 		r_cons_printf (",\"mode\":\"%s\"", r_str_rwx_i (
 			cf->rwx | dbg));
 		r_cons_printf (",\"block\":%d", core->blocksize);
-		r_cons_printf (",\"uri\":\"%s\"", cf->uri);
+		r_cons_printf (",\"uri\":\"%s\"", cf->desc->uri);
 		if (binfile) {
 			if (binfile->curxtr)
 				r_cons_printf (",\"packet\":\"%s\"",
@@ -65,10 +65,10 @@ static void r_core_file_info (RCore *core, int mode) {
 		r_cons_printf ("file\t%s\n", fn);
 		if (dbg) dbg = R_IO_WRITE | R_IO_EXEC;
 		r_cons_printf ("fd\t%d\n", cf->desc->fd);
-		r_cons_printf ("size\t0x%"PFMT64x"\n", cf->size);
+		r_cons_printf ("size\t0x%"PFMT64x"\n", r_io_desc_size (core->io, cf->desc));
 		r_cons_printf ("mode\t%s\n", r_str_rwx_i (cf->rwx | dbg));
 		r_cons_printf ("block\t0x%x\n", core->blocksize);
-		r_cons_printf ("uri\t%s\n", cf->uri);
+		r_cons_printf ("uri\t%s\n", cf->desc->uri);
 		if (binfile && binfile->curxtr)
 			r_cons_printf ("packet\t%s\n",
 				binfile->curxtr->name);
@@ -163,7 +163,7 @@ static int cmd_info(void *data, const char *input) {
 				eprintf ("Usage: ik [sdb-query]\n");
 			}
 			break;
-		case 'o': 
+		case 'o':
 			 {
 				const char *fn = input[1]==' '? input+2: cf->desc->name;
 				ut64 laddr = UT64_MAX;
@@ -189,7 +189,7 @@ static int cmd_info(void *data, const char *input) {
 		case 'i': RBININFO ("imports",R_CORE_BIN_ACC_IMPORTS); break;
 		case 'I': RBININFO ("info", R_CORE_BIN_ACC_INFO); break;
 		case 'e': RBININFO ("entries",R_CORE_BIN_ACC_ENTRIES); break;
-		case 'z': 
+		case 'z':
 			if (input[1] == 'z') {
 				/* TODO: reimplement in C to avoid forks */
 				char *ret;
@@ -249,7 +249,8 @@ static int cmd_info(void *data, const char *input) {
 				"ir|iR", "", "Relocs",
 				"is", "", "Symbols",
 				"iS", "", "Sections",
-				"iz", "", "Strings",
+				"iz", "", "Strings in data sections",
+				"izz", "", "Search for Strings in the whole binary",
 				NULL
 				};
 				r_core_cmd_help(core, help_message);

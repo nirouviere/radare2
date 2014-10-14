@@ -249,7 +249,7 @@ R_API void r_core_get_boundaries (RCore *core, const char *mode, ut64 *from, ut6
 				if (core->io->va) {
 					/* TODO: section size? */
 				} else {
-					*to = core->file->size;
+					*to = r_io_desc_size (core->io, core->file->desc);
 				}
 			}
 		}
@@ -319,7 +319,7 @@ static RList* construct_rop_gadget(RCore *core, ut64 addr, ut8 *buf, int idx, co
 			addr += aop.size;
 
 			//Handle (possible) grep
-			if (grep && !strncasecmp (asmop.buf_asm, start, end - start)) {
+			if (end && grep && !strncasecmp (asmop.buf_asm, start, end - start)) {
 				if (end[0] == ',') { // fields are comma-seperated
 					start = end + 1; // skip the comma
 					end = strstr (start, ",");
@@ -695,11 +695,16 @@ static int cmd_search(void *data, const char *input) {
 				r_config_get_i (core->config, "search.distance"));
 			RSearchKeyword *skw;
 			skw = r_search_keyword_new ((const ut8*)str, len*2, NULL, 0, NULL);
-			skw->icase = ignorecase;
-			r_search_kw_add (core->search, skw);
-			r_search_begin (core->search);
-			dosearch = R_TRUE;
 			free (str);
+			if (skw) {
+				skw->icase = ignorecase;
+				r_search_kw_add (core->search, skw);
+				r_search_begin (core->search);
+				dosearch = R_TRUE;
+			} else {
+				eprintf ("Invalid keyword\n");
+				break;
+			}
 		}
 		break;
 	case 'i':
@@ -720,17 +725,18 @@ static int cmd_search(void *data, const char *input) {
 		{
 		RSearchKeyword *skw;
 		skw = r_search_keyword_new ((const ut8*)inp, len, NULL, 0, NULL);
+		free (inp);
 		if (skw) {
 			skw->icase = ignorecase;
 			skw->type = R_SEARCH_KEYWORD_TYPE_STRING;
 			r_search_kw_add (core->search, skw);
 		} else {
 			eprintf ("Invalid keyword\n");
+			break;
 		}
 		}
 		r_search_begin (core->search);
 		dosearch = R_TRUE;
-		free (inp);
 		break;
 	case 'e': /* match regexp */
 		{

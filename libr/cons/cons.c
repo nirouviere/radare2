@@ -162,6 +162,7 @@ R_API int r_cons_enable_mouse (const int enable) {
 
 R_API RCons *r_cons_new () {
 	I.line = r_line_new ();
+	I.highlight = NULL;
 	I.event_interrupt = NULL;
 	I.fps = 0;
 	I.blankline = R_TRUE;
@@ -373,6 +374,7 @@ R_API void r_cons_flush() {
 			fclose (d);
 		} else eprintf ("Cannot write on '%s'\n", tee);
 	}
+	r_cons_highlight (I.highlight);
 	// is_html must be a filter, not a write endpoint
 	if (I.is_html) r_cons_html_print (I.buffer);
 	else r_cons_write (I.buffer, I.buffer_len);
@@ -387,6 +389,7 @@ R_API void r_cons_flush() {
 R_API void r_cons_visual_flush() {
 	if (I.noflush)
 		return;
+	r_cons_highlight (I.highlight);
 	if (!I.null) {
 /* TODO: this ifdef must go in the function body */
 #if __WINDOWS__
@@ -736,4 +739,30 @@ R_API void r_cons_set_title(const char *str) {
 
 R_API void r_cons_zero() {
 	write (1, "", 1);
+}
+
+R_API void r_cons_highlight (const char *word) {
+	char *rword, *res;
+	if (word && *word) {
+		if (I.highlight) {
+			if (strcmp (word, I.highlight)) {
+				free (I.highlight);
+				I.highlight = strdup (word);
+			}
+		} else {
+			I.highlight = strdup (word);
+		}
+		rword = malloc (strlen (word)+32);
+		strcpy (rword, "\x1b[7m");
+		strcpy (rword+4, word);
+		strcpy (rword+4+strlen (word), "\x1b[0m");
+		res = r_str_replace (I.buffer, word, rword, 1);
+		if (res) {
+			I.buffer = res;
+			I.buffer_len = I.buffer_sz = strlen (res);
+		}
+	} else {
+		free (I.highlight);
+		I.highlight = NULL;
+	}
 }

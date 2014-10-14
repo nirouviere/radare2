@@ -516,7 +516,7 @@ static int cmd_bsize(void *data, const char *input) {
 			"b", "", "display current block size",
 			"b", " 33", "set block size to 33",
 			"b", "+3", "increase blocksize by 3",
-			"b", "-16", "decrement blocksize by 3",
+			"b", "-16", "decrease blocksize by 16",
 			"b", " eip+4", "numeric argument can be an expression",
 			"bf", " foo", "set block size to flag size",
 			"bm", " 1M", "set max block size",
@@ -538,7 +538,7 @@ static int cmd_resize(void *data, const char *input) {
 	st64 delta = 0;
 	int grow, ret;
 
-	oldsize = core->file->size;
+	oldsize = r_io_desc_size (core->io, core->file->desc);
 	switch (*input) {
 	case 'm':
 		if (input[1]==' ')
@@ -579,9 +579,8 @@ static int cmd_resize(void *data, const char *input) {
 	grow = (newsize > oldsize);
 	if (grow) {
 		ret = r_io_resize (core->io, newsize);
-		if (ret<1) {
+		if (ret<1)
 			eprintf ("r_io_resize: cannot resize\n");
-		} else core->file->size = newsize;
 	}
 
 	if (delta && core->offset < newsize)
@@ -589,9 +588,8 @@ static int cmd_resize(void *data, const char *input) {
 
 	if (!grow) {
 		ret = r_io_resize (core->io, newsize);
-		if (ret<1) {
+		if (ret<1)
 			eprintf ("r_io_resize: cannot resize\n");
-		} else core->file->size = newsize;
 	}
 
 	if (newsize < core->offset+core->blocksize ||
@@ -1254,7 +1252,7 @@ R_API int r_core_cmd_foreach(RCore *core, const char *cmd, char *each) {
 
 	switch (each[0]) {
 	case '?':{
-		const char* help_msg[] = {	
+		const char* help_msg[] = {
 		"@@", "", " # foreach iterator command:",
 		"Repeat a command over a list of offsets", "", "",
 		"x", " @@ sym.*", "run 'x' over all flags matching 'sym.' in current flagspace",

@@ -23,22 +23,25 @@ static int cmd_zign(void *data, const char *input) {
 				r_cons_singleton ()->fdout = fd;
 				r_cons_strcat ("# Signatures\n");
 			}
-			r_cons_printf ("zp %s\n", input+2);
+			r_cons_printf ("zn %s\n", input+2);
 			r_list_foreach (core->anal->fcns, iter, fcni) {
 				ut8 buf[128];
-				if (r_io_read_at (core->io, fcni->addr, buf, sizeof (buf)) == sizeof (buf)) {
-					RFlagItem *flag = r_flag_get_i (core->flags, fcni->addr);
+				if (r_io_read_at (core->io, fcni->addr, buf,
+						sizeof (buf)) == sizeof (buf)) {
+					RFlagItem *flag = r_flag_get_i (
+						core->flags, fcni->addr);
 					if (flag) {
 						name = flag->name;
-						r_cons_printf ("zh %s ", name);
-						len = (fcni->size > sizeof (buf))? sizeof (buf): fcni->size;
+						r_cons_printf ("zb %s ", name);
+						len = (fcni->size > sizeof (buf))?
+							sizeof (buf): fcni->size;
 						for (i=0; i<len; i++)
 							r_cons_printf ("%02x", buf[i]);
 						r_cons_newline ();
 					} else eprintf ("Unnamed function at 0x%08"PFMT64x"\n", fcni->addr);
 				} else eprintf ("Cannot read at 0x%08"PFMT64x"\n", fcni->addr);
 			}
-			r_cons_strcat ("zp-\n");
+			r_cons_strcat ("zn-\n");
 			if (ptr) {
 				r_cons_flush ();
 				r_cons_singleton ()->fdout = fdold;
@@ -111,20 +114,27 @@ static int cmd_zign(void *data, const char *input) {
 			len = fin-ini;
 			buf = malloc (len);
 			if (buf != NULL) {
+				int count = 0;
 				eprintf ("Ranges are: 0x%08"PFMT64x" 0x%08"PFMT64x"\n", ini, fin);
-				r_cons_printf ("f-sign*\n");
+				r_cons_printf ("fs sign\n");
+				r_cons_break (NULL, NULL);
 				if (r_io_read_at (core->io, ini, buf, len) == len) {
 					for (idx=0; idx<len; idx++) {
+						if (r_cons_singleton ()->breaked)
+							break;
 						si = r_sign_check (core->sign, buf+idx, len-idx);
 						if (si) {
+							count++;
 							if (si->type == 'f')
 								r_cons_printf ("f sign.fun_%s_%d @ 0x%08"PFMT64x"\n",
 									si->name, idx, ini+idx); //core->offset);
 							else r_cons_printf ("f sign.%s @ 0x%08"PFMT64x"\n",
 								si->name, ini+idx); //core->offset+idx);
+							eprintf ("- Found %d matching function signatures\r", count);
 						}
 					}
 				} else eprintf ("Cannot read %d bytes at 0x%08"PFMT64x"\n", len, ini);
+				r_cons_break_end ();
 				free (buf);
 			} else eprintf ("Cannot alloc %d bytes\n", len);
 		}

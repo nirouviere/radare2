@@ -216,7 +216,7 @@ static RList* sections(RBinFile *arch) {
 
 static RBinInfo* info(RBinFile *arch);
 static RList* symbols(RBinFile *arch) {
-	int i, has_va;
+	int i;
 	struct Elf_(r_bin_elf_obj_t) *bin;
 	struct r_bin_elf_symbol_t *symbol = NULL;
 	RBinSymbol *ptr = NULL;
@@ -225,9 +225,9 @@ static RList* symbols(RBinFile *arch) {
 	if (!arch || !arch->o || !arch->o->bin_obj)
 		return NULL;
 	bin = arch->o->bin_obj;
-	has_va = Elf_(r_bin_elf_has_va) (bin);
+	// has_va = Elf_(r_bin_elf_has_va) (bin);
+	// if (!has_va) {
 	if (arch && arch->o && arch->o->baddr==0LL) {
-	//if (!has_va) {
 		// find base address for non-linked object (.o) //
 		if (arch->o->sections) {
 			RBinSection *s;
@@ -479,24 +479,24 @@ static RList* relocs(RBinFile *arch) {
 }
 
 static int has_canary(RBinFile *arch) {
-    RList* imports_list = imports (arch);
-    RListIter *iter;
-    RBinImport *import;
-    r_list_foreach (imports_list, iter, import) {
-        if (!strcmp(import->name, "__stack_chk_fail") ) {
-            r_list_free (imports_list);
-            return 1;
-        }
-    }
-    r_list_free (imports_list);
-    return 0;
+	RList* imports_list = imports (arch);
+	RListIter *iter;
+	RBinImport *import;
+	r_list_foreach (imports_list, iter, import) {
+		if (!strcmp(import->name, "__stack_chk_fail") ) {
+			r_list_free (imports_list);
+			return 1;
+		}
+	}
+	r_list_free (imports_list);
+	return 0;
 }
 
 static RBinInfo* info(RBinFile *arch) {
 	RBinInfo *ret = NULL;
 	char *str;
 
-	if(!(ret = R_NEW0 (RBinInfo)))
+	if (!(ret = R_NEW0 (RBinInfo)))
 		return NULL;
 	ret->lang = "c";
 	if (arch->file)

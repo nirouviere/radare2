@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2013 - pancake */
+/* radare - LGPL - Copyright 2009-2014 - pancake */
 
 #include <r_io.h>
 // TODO: to be deprecated.. this is slow and boring
@@ -63,6 +63,9 @@ R_API void r_io_desc_free(RIODesc *desc) {
 	if (desc->name) {
 		free (desc->name);
 		desc->name = NULL;
+	}
+	if (desc->uri) {
+		R_FREE (desc->uri);
 	}
 	memset (desc, 0, sizeof (RIODesc));
 	//	free (desc); double free orw at

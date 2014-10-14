@@ -73,9 +73,7 @@ typedef struct r_core_log_t {
 } RCoreLog;
 
 typedef struct r_core_file_t {
-	ut64 seek;
 	RIOMap *map;
-	int rwx;
 	int dbg;
 	RIODesc *desc;
 	RBinBind binb;
@@ -226,8 +224,8 @@ R_API int r_core_setup_debugger (RCore *r, const char *debugbackend);
 
 R_API int r_core_files_free(const RCore *core, RCoreFile *cf);
 R_API void r_core_file_free(RCoreFile *cf);
-R_API RCoreFile *r_core_file_open(RCore *core, const char *file, int mode, ut64 loadaddr);
-R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int mode, ut64 loadaddr);
+R_API RCoreFile *r_core_file_open(RCore *core, const char *file, int flags, ut64 loadaddr);
+R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int flags, ut64 loadaddr);
 R_API RCoreFile *r_core_file_get_by_fd(RCore *core, int fd);
 R_API int r_core_file_close(RCore *core, RCoreFile *fh);
 R_API int r_core_file_close_fd(RCore *core, int fd);
@@ -401,7 +399,7 @@ R_API int r_core_visual_comments (RCore *core);
 R_API int r_core_visual_prompt (RCore *core);
 R_API int r_core_search_preludes(RCore *core);
 R_API int r_core_search_prelude(RCore *core, ut64 from, ut64 to, const ut8 *buf, int blen, const ut8 *mask, int mlen);
-R_API void r_core_get_boundaries (RCore *core, const char *mode, ut64 *from, ut64 *to);
+R_API RList* /*<RIOMap*>*/ r_core_get_boundaries (RCore *core, const char *mode, ut64 *from, ut64 *to);
 
 R_API int r_core_patch (RCore *core, const char *patch);
 

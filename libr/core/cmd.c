@@ -13,6 +13,8 @@
   - commands can be listed like in a tree
 #endif
 
+#define INTERACTIVE_MAX_REP 1024
+
 #include <r_core.h>
 #include <r_anal.h>
 
@@ -174,7 +176,7 @@ static int cmd_rap(void *data, const char *input) {
 	RCore *core = (RCore *)data;
 	switch (*input) {
 	case '\0': r_core_rtr_list (core); break;
-	case 'h':r_core_rtr_http (core, getArg(input[1],'h'), input+1); break;
+	case 'h': r_core_rtr_http (core, getArg(input[1],'h'), input+1); break;
 	case 'H': while (input[1]==' ') input++;
 		  r_core_rtr_http (core, getArg(input[1],'H'), input+1); break;
 	case '?': r_core_rtr_help (core); break;
@@ -365,6 +367,11 @@ static int cmd_interpret(void *data, const char *input) {
 		r_core_cmd_help (core, help_msg);
 		}
 		break;
+#if 1
+	case '0'...'9':
+		eprintf ("|ERROR| No .[0..9] to avoid infinite loops\n");
+		break;
+#endif
 	default:
 		inp = strdup (input);
 		filter = strchr (inp, '~');
@@ -783,6 +790,13 @@ static int r_core_cmd_subst(RCore *core, char *cmd) {
 		if (!*cmd) goto beach;
 	}
 	if (rep<1) rep = 1;
+	if (rep>INTERACTIVE_MAX_REP) {
+		if (r_config_get_i (core->config, "scr.interactive")) {
+			if (!r_cons_yesno ('n',
+				"Are you sure to repeat this %d times? (y/N)", rep))
+				goto beach;
+		}
+	}
 	while (rep-- && *cmd) {
 		ret = r_core_cmd_subst_i (core, cmd);
 		if (ret && *cmd=='q')

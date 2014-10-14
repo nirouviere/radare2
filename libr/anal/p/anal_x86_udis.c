@@ -93,8 +93,6 @@ static int getarg(char *src, struct ud *u, st64 mask, int idx, int regsz) {
 	case UD_OP_MEM:
 		n = getval (op);
 		// TODO ->scale
-#define RPN 1
-#if RPN
 		if (op->base != UD_NONE) {
 			idx = op->base-UD_R_AL;
 			if (idx>=0 && idx<UD_REG_TAB_SIZE) {
@@ -109,11 +107,11 @@ static int getarg(char *src, struct ud *u, st64 mask, int idx, int regsz) {
                                         src += strlen (src);
                                 }
                                 if (u->mnemonic == UD_Ilea) {
-					if (n>0) sprintf (src, ",%"PFMT64d",+", n);
-					else if (n<0) sprintf (src, "%"PFMT64d, n);
-				} else if (n >= -256 && n < 256) {
+					if ((st16)n>0) sprintf (src, ",%"PFMT64d",+", n);
+					else if ((st16)n<0) sprintf (src, ",%"PFMT64d",-", UT32_MAX-n);
+				} else if ((st16)n >= -256 && (st16)n < 256) {
 					char nb = (char)n;
-					char absn = (nb<0)? -nb: nb;
+					char absn = ((st16)nb<0)? -nb: nb;
 					if (n==0) sprintf (src, ",[%d]", regsz);
 					else sprintf (src, ",%d,%c,[%d]",
 						absn, nb<0?'-':'+', regsz);
@@ -128,39 +126,6 @@ static int getarg(char *src, struct ud *u, st64 mask, int idx, int regsz) {
 				 */
 			}
 		} else sprintf (src, "0x%"PFMT64x",[%d]", n & mask, regsz);
-#else
-		if (op->base != UD_NONE) {
-			idx = op->base-UD_R_AL;
-			if (idx>=0 && idx<UD_REG_TAB_SIZE) {
-				if (u->mnemonic == UD_Ilea)
-					sprintf (src, "%s", ud_reg_tab[idx]);
-				else sprintf (src, "[%s", ud_reg_tab[idx]);
-
-                                src += strlen (src);
-                                if (op->index != UD_NONE) {
-                                        idx = op->index - UD_R_AL;
-                                        if (idx >= 0 && idx < UD_REG_TAB_SIZE)
-                                                sprintf (src, "+%d*%s", op->scale, ud_reg_tab[idx]);
-
-                                        src += strlen (src);
-                                }
-                                if (u->mnemonic == UD_Ilea) {
-					if (n>0) sprintf (src, "+%"PFMT64d, n);
-					else if (n<0) sprintf (src, "%"PFMT64d, n);
-				} else if (n >= -256 && n < 256) {
-					sprintf (src, "%+d]", (int) n);
-				} else {
-					sprintf (src, "+0x%"PFMT64x"]", mask & n);
-				}
-			} else {
-				/* If UDis86 works properly, it will never reach this point.
-				 * Only useful for debug purposes ("unknown reg" is clearer
-				 * than an empty string, right?)
-				 */
-				sprintf (src, "[unknown_reg_%d]", idx);
-			}
-		} else sprintf (src, "[0x%"PFMT64x"]", n & mask);
-#endif
 		break;
 	default:
 		break;
@@ -492,7 +457,12 @@ default:
 	case UD_Ihlt:
 		op->type = R_ANAL_OP_TYPE_TRAP; //HALT;
 		break;
+	case UD_Iin:
+	case UD_Iout:
+		op->type = R_ANAL_OP_TYPE_IO;
+		break;
 	case UD_Iret:
+	case UD_Iiretd:
 	case UD_Iretf:
 	case UD_Isysret:
 		op->type = R_ANAL_OP_TYPE_RET;
@@ -512,7 +482,57 @@ default:
 }
 
 static int set_reg_profile(RAnal *anal) {
-	const char *p = (anal->bits == 32) ?
+	const char *p = NULL;
+	switch (anal->bits) {
+	case 16: p=
+		"=pc	ip\n"
+		"=sp	sp\n"
+		"=bp	bp\n"
+		"=a0	ax\n"
+		"=a1	bx\n"
+		"=a2	cx\n"
+		"=a3	di\n"
+		"gpr	ip	.16	48	0\n"
+		"gpr	ax	.16	24	0\n"
+		"gpr	ah	.8	24	0\n"
+		"gpr	al	.8	25	0\n"
+		"gpr	bx	.16	0	0\n"
+		"gpr	bh	.8	0	0\n"
+		"gpr	bl	.8	1	0\n"
+		"gpr	cx	.16	4	0\n"
+		"gpr	ch	.8	4	0\n"
+		"gpr	cl	.8	5	0\n"
+		"gpr	dx	.16	8	0\n"
+		"gpr	dh	.8	8	0\n"
+		"gpr	dl	.8	9	0\n"
+		"gpr	sp	.16	60	0\n"
+		"gpr	bp	.16	20	0\n"
+		"gpr	si	.16	12	0\n"
+		"gpr	di	.16	16	0\n"
+		"seg	cs	.16	52	0\n"
+		"gpr	flags	.16	56	0\n"
+		"gpr	cf	.1	.448	0\n"
+		"flg	flag_p	.1	.449	0\n"
+		"flg	flag_a	.1	.450	0\n"
+		"gpr	zf	.1	.451	0\n"
+		"gpr	sf	.1	.452	0\n"
+		"flg	flag_t	.1	.453	0\n"
+		"flg	flag_i	.1	.454	0\n"
+		"flg	flag_d	.1	.455	0\n"
+		"flg	of	.1	.456	0\n"
+		"flg	flag_r	.1	.457	0\n";
+#if 0
+		"drx	dr0	.32	0	0\n"
+		"drx	dr1	.32	4	0\n"
+		"drx	dr2	.32	8	0\n"
+		"drx	dr3	.32	12	0\n"
+		//"drx	dr4	.32	16	0\n"
+		//"drx	dr5	.32	20	0\n"
+		"drx	dr6	.32	24	0\n"
+		"drx	dr7	.32	28	0\n"
+#endif
+		break;
+	case 32: p=
 		"=pc	eip\n"
 		"=sp	esp\n"
 		"=bp	ebp\n"
@@ -571,71 +591,73 @@ static int set_reg_profile(RAnal *anal) {
 		//"drx	dr4	.32	16	0\n"
 		//"drx	dr5	.32	20	0\n"
 		"drx	dr6	.32	24	0\n"
-		"drx	dr7	.32	28	0\n"
-	:
-		"=pc	rip\n"
-		"=sp	rsp\n"
-		"=bp	rbp\n"
-		"=a0	rax\n"
-		"=a1	rbx\n"
-		"=a2	rcx\n"
-		"=a3	rdx\n"
-		"# no profile defined for x86-64\n"
-		"gpr	r15	.64	0	0\n"
-		"gpr	r14	.64	8	0\n"
-		"gpr	r13	.64	16	0\n"
-		"gpr	r12	.64	24	0\n"
-		"gpr	rbp	.64	32	0\n"
-		"gpr	ebp	.32	32	0\n"
-		"gpr	rbx	.64	40	0\n"
-		"gpr	ebx	.32	40	0\n"
-		"gpr	bx	.16	40	0\n"
-		"gpr	bh	.8	40	0\n"
-		"gpr	bl	.8	41	0\n"
-		"gpr	r11	.64	48	0\n"
-		"gpr	r10	.64	56	0\n"
-		"gpr	r9	.64	64	0\n"
-		"gpr	r8	.64	72	0\n"
-		"gpr	rax	.64	80	0\n"
-		"gpr	eax	.32	80	0\n"
-		"gpr	rcx	.64	88	0\n"
-		"gpr	ecx	.32	88	0\n"
-		"gpr	rdx	.64	96	0\n"
-		"gpr	edx	.32	96	0\n"
-		"gpr	rsi	.64	104	0\n"
-		"gpr	esi	.32	104	0\n"
-		"gpr	rdi	.64	112	0\n"
-		"gpr	edi	.32	112	0\n"
-		"gpr	oeax	.64	120	0\n"
-		"gpr	rip	.64	128	0\n"
-		"seg	cs	.64	136	0\n"
-		//"flg	eflags	.64	144	0\n"
-		"gpr	eflags	.32	144	0	c1p.a.zstido.n.rv\n"
-		"gpr	cf	.1	.1152	0\n"
-		"flg	flag_p	.1	.1153	0\n"
-		"flg	flag_a	.1	.1154	0\n"
-		"gpr	zf	.1	.1155	0\n"
-		"gpr	sf	.1	.1156	0\n"
-		"flg	flag_t	.1	.1157	0\n"
-		"flg	flag_i	.1	.1158	0\n"
-		"flg	flag_d	.1	.1159	0\n"
-		"flg	of	.1	.1160	0\n"
-		"flg	flag_r	.1	.1161	0\n"
-		"gpr	rsp	.64	152	0\n"
-		"seg	ss	.64	160	0\n"
-		"seg	fs_base	.64	168	0\n"
-		"seg	gs_base	.64	176	0\n"
-		"seg	ds	.64	184	0\n"
-		"seg	es	.64	192	0\n"
-		"seg	fs	.64	200	0\n"
-		"seg	gs	.64	208	0\n"
-		"drx	dr0	.32	0	0\n"
-		"drx	dr1	.32	4	0\n"
-		"drx	dr2	.32	8	0\n"
-		"drx	dr3	.32	12	0\n"
-		"drx	dr6	.32	24	0\n"
 		"drx	dr7	.32	28	0\n";
-
+		 break;
+	default: p=
+		 "=pc	rip\n"
+		 "=sp	rsp\n"
+		 "=bp	rbp\n"
+		 "=a0	rax\n"
+		 "=a1	rbx\n"
+		 "=a2	rcx\n"
+		 "=a3	rdx\n"
+		 "# no profile defined for x86-64\n"
+		 "gpr	r15	.64	0	0\n"
+		 "gpr	r14	.64	8	0\n"
+		 "gpr	r13	.64	16	0\n"
+		 "gpr	r12	.64	24	0\n"
+		 "gpr	rbp	.64	32	0\n"
+		 "gpr	ebp	.32	32	0\n"
+		 "gpr	rbx	.64	40	0\n"
+		 "gpr	ebx	.32	40	0\n"
+		 "gpr	bx	.16	40	0\n"
+		 "gpr	bh	.8	40	0\n"
+		 "gpr	bl	.8	41	0\n"
+		 "gpr	r11	.64	48	0\n"
+		 "gpr	r10	.64	56	0\n"
+		 "gpr	r9	.64	64	0\n"
+		 "gpr	r8	.64	72	0\n"
+		 "gpr	rax	.64	80	0\n"
+		 "gpr	eax	.32	80	0\n"
+		 "gpr	rcx	.64	88	0\n"
+		 "gpr	ecx	.32	88	0\n"
+		 "gpr	rdx	.64	96	0\n"
+		 "gpr	edx	.32	96	0\n"
+		 "gpr	rsi	.64	104	0\n"
+		 "gpr	esi	.32	104	0\n"
+		 "gpr	rdi	.64	112	0\n"
+		 "gpr	edi	.32	112	0\n"
+		 "gpr	oeax	.64	120	0\n"
+		 "gpr	rip	.64	128	0\n"
+		 "seg	cs	.64	136	0\n"
+		 //"flg	eflags	.64	144	0\n"
+		 "gpr	eflags	.32	144	0	c1p.a.zstido.n.rv\n"
+		 "gpr	cf	.1	.1152	0\n"
+		 "flg	flag_p	.1	.1153	0\n"
+		 "flg	flag_a	.1	.1154	0\n"
+		 "gpr	zf	.1	.1155	0\n"
+		 "gpr	sf	.1	.1156	0\n"
+		 "flg	flag_t	.1	.1157	0\n"
+		 "flg	flag_i	.1	.1158	0\n"
+		 "flg	flag_d	.1	.1159	0\n"
+		 "flg	of	.1	.1160	0\n"
+		 "flg	flag_r	.1	.1161	0\n"
+		 "gpr	rsp	.64	152	0\n"
+		 "seg	ss	.64	160	0\n"
+		 "seg	fs_base	.64	168	0\n"
+		 "seg	gs_base	.64	176	0\n"
+		 "seg	ds	.64	184	0\n"
+		 "seg	es	.64	192	0\n"
+		 "seg	fs	.64	200	0\n"
+		 "seg	gs	.64	208	0\n"
+		 "drx	dr0	.32	0	0\n"
+		 "drx	dr1	.32	4	0\n"
+		 "drx	dr2	.32	8	0\n"
+		 "drx	dr3	.32	12	0\n"
+		 "drx	dr6	.32	24	0\n"
+		 "drx	dr7	.32	28	0\n";
+		 break;
+	}
 	return r_reg_set_profile_string (anal->reg, p); 
 }
 

@@ -885,12 +885,12 @@ void cmd_anal_reg(RCore *core, const char *str) {
 			regname = r_str_clean (ostr);
 			r = r_reg_get (core->dbg->reg, regname, -1); //R_REG_TYPE_GPR);
 			if (r) {
-				r_cons_printf ("0x%08"PFMT64x" ->", str,
+				eprintf ("%s 0x%08"PFMT64x" -> ", str,
 					r_reg_get_value (core->dbg->reg, r));
 				r_reg_set_value (core->dbg->reg, r,
 					r_num_math (core->num, arg+1));
 				r_debug_reg_sync (core->dbg, -1, R_TRUE);
-				r_cons_printf ("0x%08"PFMT64x"\n",
+				eprintf ("0x%08"PFMT64x"\n",
 					r_reg_get_value (core->dbg->reg, r));
 			} else {
 				eprintf ("ar: Unknown register '%s'\n", regname);
@@ -922,7 +922,7 @@ void cmd_anal_reg(RCore *core, const char *str) {
 static void esil_step(RCore *core, ut64 until_addr, const char *until_expr) {
 	// Stepping
 	int ret;
-	ut8 code[32];
+	ut8 code[256];
 	RAnalOp op;
 	const char *name = r_reg_get_name (core->anal->reg, r_reg_get_name_idx ("pc"));
 	ut64 addr = r_reg_getv (core->anal->reg, name);
@@ -957,21 +957,35 @@ static void esil_step(RCore *core, ut64 until_addr, const char *until_expr) {
 		addr = r_reg_getv (core->anal->reg, name);
 		//eprintf ("PC=0x%llx\n", (ut64)addr);
 	}
-	r_io_read_at (core->io, addr, code, 32);
+	r_io_read_at (core->io, addr, code, sizeof (code));
 	r_asm_set_pc (core->assembler, addr);
-	ret = r_anal_op (core->anal, &op, addr, code, 32);
-	eprintf ("EMULATE %s\n", R_STRBUF_SAFEGET (&op.esil));
+	ret = r_anal_op (core->anal, &op, addr, code, sizeof (code));
+#if 0
+eprintf ("RET %d\n", ret);
+eprintf ("ADDR 0x%llx\n", addr);
+eprintf ("DATA %x %x %x %x\n", code[0], code[1], code[2], code[3]);
+eprintf ("ESIL %s\n", op.esil);
+eprintf ("EMULATE %s\n", R_STRBUF_SAFEGET (&op.esil));
+sleep (1);
+#endif
 	if (ret) {
 		//r_anal_esil_eval (core->anal, input+2);
 		RAnalEsil *esil = core->anal->esil;
 		r_anal_esil_set_offset (esil, addr);
 		r_anal_esil_parse (esil, R_STRBUF_SAFEGET (&op.esil));
 		if (core->anal->cur && core->anal->cur->esil_post_loop)
-			core->anal->cur->esil_post_loop(esil, &op);
+			core->anal->cur->esil_post_loop (esil, &op);
 		r_anal_esil_dumpstack (esil);
 		r_anal_esil_stack_free (esil);
-	 }
+	}
 	ut64 newaddr = r_reg_getv (core->anal->reg, name);
+
+		ut64 follow = r_config_get_i (core->config, "dbg.follow");
+	if (follow>0) {
+		ut64 pc = r_debug_reg_get (core->dbg, "pc");
+		if ((pc<core->offset) || (pc > (core->offset+follow)))
+			r_core_cmd0 (core, "sr pc");
+	}
 	if (addr == newaddr) {
 		if (op.size<1)
 			op.size = 1; // avoid inverted stepping
@@ -1123,16 +1137,16 @@ static int cmd_anal(void *data, const char *input) {
 						while (pc<end) {
 							r_asm_set_pc (core->assembler, pc);
 							ret = r_anal_op (core->anal, &op, addr, buf, 32); // read overflow
-if (ret) {
-							r_reg_setv (core->anal->reg, "pc", pc);
-							r_anal_esil_parse (core->anal->esil, R_STRBUF_SAFEGET (&op.esil));
-							r_anal_esil_dumpstack (core->anal->esil);
-							r_anal_esil_stack_free (core->anal->esil);
-							pc += op.size;
-} else {
-	pc += 4; // XXX
-}
-					       }
+							if (ret) {
+								r_reg_setv (core->anal->reg, "pc", pc);
+								r_anal_esil_parse (core->anal->esil, R_STRBUF_SAFEGET (&op.esil));
+								r_anal_esil_dumpstack (core->anal->esil);
+								r_anal_esil_stack_free (core->anal->esil);
+								pc += op.size;
+							} else {
+								pc += 4; // XXX
+							}
+						}
 				       }
 			       } else eprintf ("Cannot find function at 0x%08"PFMT64x"\n", core->offset);
 			}

@@ -575,7 +575,7 @@ static void handle_show_xrefs (RCore *core, RDisasmState *ds) {
 
 		if (r_list_length (xrefs)> ds->maxrefs) {
 			beginline (core, ds, f);
-			r_cons_printf ("%s; XREFS: ", ds->pal_comment);
+			r_cons_printf ("%s; XREFS: ", ds->show_color? ds->pal_comment: "");
 			r_list_foreach (xrefs, iter, refi) {
 				r_cons_printf ("%s 0x%08"PFMT64x"  ",
 					r_anal_xrefs_type_tostring (refi->type), refi->addr);
@@ -583,7 +583,8 @@ static void handle_show_xrefs (RCore *core, RDisasmState *ds) {
 					if (iter->n) {
 						r_cons_newline ();
 						beginline (core, ds, f);
-						r_cons_printf ("%s; XREFS: ", ds->pal_comment);
+						r_cons_printf ("%s; XREFS: ",
+							ds->show_color? ds->pal_comment: "");
 					}
 					count = 0;
 				} else count++;
@@ -859,33 +860,9 @@ static void handle_update_ref_lines (RCore *core, RDisasmState *ds) {
 		ds->line = NULL;
 	}
 }
-static int highlight (const char *word, char *op, int size) {
-	char *res, *rword, *opstr = strdup (op);
-	rword = malloc (strlen (word)+32);
-	strcpy (rword, "\x1b[7m");
-	strcpy (rword+4, word);
-	strcpy (rword+4+strlen(word), "\x1b[0m");
-	res = r_str_replace (opstr, word, rword, 1);
-	if (!res) {
-		free (rword);
-		free (opstr);
-		return R_FALSE;
-	}
-	opstr = res;
-	if (strlen (opstr)+1>=size) {
-		free (rword);
-		free (opstr);
-		return R_FALSE;
-	}
-	strcpy (op, opstr);
-	free (opstr);
-	free (rword);
-	return R_TRUE;
-}
 
 static int perform_disassembly(RCore *core, RDisasmState *ds, ut8 *buf, int len) {
 	int ret;
-
 	// TODO : line analysis must respect data types! shouldnt be interpreted as code
 	ret = r_asm_disassemble (core->assembler, &ds->asmop, buf, len);
 	if (ds->asmop.size<1) {
@@ -1516,11 +1493,13 @@ static void handle_print_comments_right (RCore *core, RDisasmState *ds) {
 		int c = r_cons_get_column ();
 		if (c<ds->ocols)
 			r_cons_memset (' ', ds->ocols-c);
-		r_cons_strcat (ds->color_comment);
+		if (ds->show_color)
+			r_cons_strcat (ds->color_comment);
 		r_cons_strcat ("  ; ");
 		//r_cons_strcat_justify (comment, strlen (ds->refline) + 5, ';');
 		r_cons_strcat (ds->comment);
-		handle_print_color_reset(core, ds);
+		if (ds->show_color)
+			handle_print_color_reset (core, ds);
 		free (ds->comment);
 		ds->comment = NULL;
 	}

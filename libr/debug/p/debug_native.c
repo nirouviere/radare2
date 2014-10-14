@@ -361,6 +361,27 @@ static int r_debug_native_step(RDebug *dbg) {
 // return thread id
 static int r_debug_native_attach(RDebug *dbg, int pid) {
 	int ret = -1;
+#if __linux__
+	int traceflags = 0;
+	if (dbg->trace_forks) {
+		traceflags |= PTRACE_O_TRACEFORK;
+		traceflags |= PTRACE_O_TRACEVFORK;
+		traceflags |= PTRACE_O_TRACEVFORKDONE;
+	}
+	if (dbg->trace_clone) {
+		// threads
+		traceflags |= PTRACE_O_TRACECLONE;
+	}
+	//traceflags |= PTRACE_O_TRACESYSGOOD; mark 0x80| on signal event, x86-only
+	if (dbg->trace_execs) {
+		traceflags |= PTRACE_O_TRACEEXEC;
+	}
+	traceflags |= PTRACE_O_TRACEEXIT;
+	if (ptrace (PTRACE_SETOPTIONS, pid, 0, traceflags) == -1) {
+		perror ("ptrace_setoptions");
+		return -1;
+	}
+#endif
 	if (pid == dbg->pid)
 		return pid;
 #if __WINDOWS__
@@ -657,13 +678,18 @@ static RList *r_debug_native_pids(int pid) {
 				continue;
 			}
 			cmdline[sizeof (cmdline)-1] = '\0';
-			ptr = strstr (cmdline, "PPid: ");
+			ptr = strstr (cmdline, "PPid:");
 			if (ptr) {
 				int ret, ppid = atoi (ptr+6);
 				close (fd);
+				if (i==pid) {
+					//eprintf ("PPid: %d\n", ppid);
+					r_list_append (list, r_debug_pid_new (
+						"(ppid)", ppid, 's', 0));
+				}
 				if (ppid != pid)
 					continue;
-				snprintf (cmdline, sizeof (cmdline), "/proc/%d/cmdline", ppid);
+				snprintf (cmdline, sizeof (cmdline)-1, "/proc/%d/cmdline", ppid);
 				fd = open (cmdline, O_RDONLY);
 				if (fd == -1)
 					continue;
@@ -881,16 +907,15 @@ eprintf ("++ EFL = 0x%08x  %d\n", ctx.EFlags, r_offsetof (CONTEXT, EFlags));
         }
 
 	int tid = dbg->tid;
+	if (tid <0 || tid>=inferior_thread_count) {
+		dbg->tid = tid = dbg->pid;
+	}
 	if (tid == dbg->pid)
 		tid = 0;
         if (inferior_thread_count>0) {
                 /* TODO: allow to choose the thread */
 		gp_count = R_DEBUG_STATE_SZ;
 
-		if (tid <0 || tid>=inferior_thread_count) {
-			eprintf ("Tid out of range %d\n", inferior_thread_count);
-			return R_FALSE;
-		}
 // XXX: kinda spaguetti coz multi-arch
 #if __i386__ || __x86_64__
 		switch (type) {
@@ -986,31 +1011,16 @@ eprintf ("++ EFL = 0x%08x  %d\n", ctx.EFlags, r_offsetof (CONTEXT, EFlags));
 #elif __linux__ && __powerpc__
 		ret = ptrace (PTRACE_GETREGS, pid, &regs, NULL);
 #else
-		/* linux/arm/x86/x64 */
-		if (dbg->bits & R_SYS_BITS_32) {
-// XXX. this is wrong
-#if 0
-			struct user_regs_struct_x86_64 r64;
-			ret = ptrace (PTRACE_GETREGS, pid, NULL, &r64);
-eprintf (" EIP : 0x%x\n", r32.eip);
-eprintf (" ESP : 0x%x\n", r32.esp);
+		/* linux-{arm/x86/x64} */
+		ret = ptrace (PTRACE_GETREGS, pid, NULL, &regs);
 #endif
-
-#if 0
-int i=0;
-unsigned char *p = &r64;;
-for(i=0;i< sizeof (r64); i++) {
-printf ("%02x ", p[i]);
-}
-printf ("\n");
-#endif
-			ret = ptrace (PTRACE_GETREGS, pid, NULL, &regs);
-		} else {
-			ret = ptrace (PTRACE_GETREGS, pid, NULL, &regs);
-		}
-#endif
-		if (ret != 0)
+		if (ret != 0) {
+			// if perror here says 'no such process' and the
+			// process exists still.. is because there's a
+			// missing call to 'wait'. and the process is not
+			// yet available to accept more ptrace queries.
 			return R_FALSE;
+		}
 		if (sizeof (regs) < size)
 			size = sizeof (regs);
 		memcpy (buf, &regs, size);
@@ -1097,14 +1107,14 @@ static int r_debug_native_reg_write(RDebug *dbg, int type, const ut8* buf, int s
 #else
 			ret = thread_set_state (tid, R_DEBUG_STATE_T, (thread_state_t) regs, &gp_count);
 #endif
-//if (thread_set_state (inferior_threads[0], R_DEBUG_STATE_T, (thread_state_t) regs, gp_count) != KERN_SUCCESS) {
-		if (ret != KERN_SUCCESS) {
-			eprintf ("debug_setregs: Failed to set thread %d %d.error (%x). (%s)\n",
-					(int)dbg->pid, pid_to_task (dbg->pid), (int)ret,
-					MACH_ERROR_STRING (ret));
-			perror ("thread_set_state");
-			return R_FALSE;
-		}
+//if (thread_set_state (inferior_threads[0], R_DEBUG_STATE_T, (thread_state_t) regs, gp_count) != KERN_SUCCESS)
+			if (ret != KERN_SUCCESS) {
+				eprintf ("debug_setregs: Failed to set thread %d %d.error (%x). (%s)\n",
+						(int)dbg->pid, pid_to_task (dbg->pid), (int)ret,
+						MACH_ERROR_STRING (ret));
+				perror ("thread_set_state");
+				return R_FALSE;
+			}
 		} else eprintf ("There are no threads!\n");
 		return sizeof (R_DEBUG_REG_T);
 #else
@@ -1179,19 +1189,19 @@ static int r_debug_native_reg_write(RDebug *dbg, int type, const ut8* buf, int s
 			ret = thread_set_state (inferior_threads[tid],
 					R_DEBUG_STATE_T, (thread_state_t) regs, &gp_count);
 #endif
-//if (thread_set_state (inferior_threads[0], R_DEBUG_STATE_T, (thread_state_t) regs, gp_count) != KERN_SUCCESS) {
-		if (ret != KERN_SUCCESS) {
-			eprintf ("debug_setregs: Failed to set thread %d %d.error (%x). (%s)\n",
-					(int)pid, pid_to_task (pid), (int)ret, MACH_ERROR_STRING (ret));
-			perror ("thread_set_state");
-			return R_FALSE;
-		}
+//if (thread_set_state (inferior_threads[0], R_DEBUG_STATE_T, (thread_state_t) regs, gp_count) != KERN_SUCCESS)
+			if (ret != KERN_SUCCESS) {
+				eprintf ("debug_setregs: Failed to set thread %d %d.error (%x). (%s)\n",
+						(int)pid, pid_to_task (pid), (int)ret, MACH_ERROR_STRING (ret));
+				perror ("thread_set_state");
+				return R_FALSE;
+			}
 		} else eprintf ("There are no threads!\n");
 		return sizeof (R_DEBUG_REG_T);
 #else
 #warning r_debug_native_reg_write not implemented
 #endif
-	} else eprintf ("TODO: reg_write_non-gpr (%d)\n", type);
+	} //else eprintf ("TODO: reg_write_non-gpr (%d)\n", type);
 	return R_FALSE;
 }
 

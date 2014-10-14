@@ -59,6 +59,9 @@ R_API RDebug *r_debug_new(int hard) {
 		// R_SYS_ARCH
 		dbg->arch = r_sys_arch_id (R_SYS_ARCH); // 0 is native by default
 		dbg->bits = R_SYS_BITS;
+		dbg->trace_forks = 1;
+		dbg->trace_clone = 0;
+		dbg->trace_execs = 0;
 		dbg->anal = NULL;
 		dbg->pid = -1;
 		dbg->bpsize = 1;
@@ -114,7 +117,7 @@ R_API int r_debug_attach(RDebug *dbg, int pid) {
 			r_debug_select (dbg, pid, ret); //dbg->pid, dbg->tid);
 		}// else if (pid != -1)
 		//	eprintf ("Cannot attach to this pid %d\n", pid);
-	} else eprintf ("dbg->attach = NULL\n");
+	}// else eprintf ("dbg->attach = NULL\n");
 	return ret;
 }
 
@@ -494,11 +497,16 @@ R_API int r_debug_continue_until_optype(RDebug *dbg, int type, int over) {
 		return R_FALSE;
 	}
 
+	r_debug_step (dbg, 1);
+	r_debug_reg_sync (dbg, R_REG_TYPE_GPR, R_FALSE);
+
 	// Initial refill
 	buf_pc = r_debug_reg_get (dbg, dbg->reg->name[R_REG_NAME_PC]);
 	dbg->iob.read_at (dbg->iob.io, buf_pc, buf, sizeof (buf));
 
+	// step first, we dont want to check current optype
 	for (;;) {
+		r_debug_reg_sync (dbg, R_REG_TYPE_GPR, R_FALSE);
 		pc = r_debug_reg_get (dbg, dbg->reg->name[R_REG_NAME_PC]);
 		// Try to keep the buffer full 
 		if (pc - buf_pc > sizeof (buf)) { 
@@ -569,7 +577,11 @@ R_API int r_debug_continue_syscalls(RDebug *dbg, int *sc, int n_sc) {
 		reg = (int)r_debug_reg_get (dbg, "a0"); // XXX
 		sysname = r_syscall_get_i (dbg->anal->syscall, reg, -1);
 		if (!sysname) sysname = "unknown";
-		eprintf ("--> syscall %d %s\n", reg, sysname);
+		eprintf ("--> 0x%08"PFMT64x" syscall %d %s (0x%"PFMT64x" 0x%"PFMT64x" 0x%"PFMT64x")\n",
+			r_debug_reg_get (dbg, "pc"), reg, sysname,
+			r_debug_reg_get (dbg, "a0"),
+			r_debug_reg_get (dbg, "a1"),
+			r_debug_reg_get (dbg, "a2"));
 		return reg;
 	}
 
@@ -584,6 +596,8 @@ R_API int r_debug_continue_syscalls(RDebug *dbg, int *sc, int n_sc) {
 	}
 	for (;;) {
 		dbg->h->contsc (dbg, dbg->pid, 0); // TODO handle return value
+		// wait until continuation
+		r_debug_wait (dbg);
 		if (!r_debug_reg_sync (dbg, R_REG_TYPE_GPR, R_FALSE)) {
 			eprintf ("--> eol\n");
 			return -1;
@@ -593,7 +607,16 @@ R_API int r_debug_continue_syscalls(RDebug *dbg, int *sc, int n_sc) {
 			return -1;
 		sysname = r_syscall_get_i (dbg->anal->syscall, reg, -1);
 		if (!sysname) sysname = "unknown";
-		eprintf ("--> syscall %d %s\n", reg, sysname);
+		eprintf ("--> 0x%08"PFMT64x" syscall %d %s (0x%"PFMT64x" 0x%"PFMT64x" 0x%"PFMT64x")\n",
+			r_debug_reg_get (dbg, "pc"), reg, sysname,
+			r_debug_reg_get (dbg, "a0"),
+			r_debug_reg_get (dbg, "a1"),
+			r_debug_reg_get (dbg, "a2"));
+		if (n_sc == -1)
+			continue;
+		if (n_sc == 0) {
+			break;
+		}
 		for (i=0; i<n_sc; i++) {
 			if (sc[i] == reg)
 				return reg;

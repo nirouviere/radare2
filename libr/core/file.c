@@ -27,6 +27,12 @@ R_API int r_core_file_reopen(RCore *core, const char *args, int perm) {
 		eprintf ("Cannot reopen in sandbox\n");
 		return R_FALSE;
 	}
+	if (isdebug) {
+		// if its in debugger mode we have to respawn a new process
+		// instead of reattaching
+		free (ofilepath);
+		ofilepath = r_str_newf ("dbg://%s", odesc->name);
+	}
 	if (!core->file) {
 		eprintf ("No file opened to reopen\n");
 		free (ofilepath);
@@ -35,7 +41,7 @@ R_API int r_core_file_reopen(RCore *core, const char *args, int perm) {
 	}
 	newpid = odesc ? odesc->fd : -1;
 
-	if (!perm) perm = core->file->rwx;
+	if (!perm) perm = odesc ? odesc->flags : 0;		//maybe (odesc->flags & 7)
 	path = strdup (ofilepath);
 
 	if (isdebug) {
@@ -475,8 +481,9 @@ R_API RIOMap *r_core_file_get_next_map (RCore *core, RCoreFile * fh, int mode, u
 		map = r_io_map_new (core->io, fh->desc->fd, mode, 0, loadaddr, r_io_desc_size (core->io, fh->desc));
 	if (!strcmp (loadmethod, "fail"))
 		map = r_io_map_add (core->io, fh->desc->fd, mode, 0, loadaddr, r_io_desc_size (core->io, fh->desc));
-	if (!strcmp (loadmethod, "append") && load_align)
+	if (!strcmp (loadmethod, "append") && load_align) {
 		map = r_io_map_add_next_available (core->io, fh->desc->fd, mode, 0, loadaddr, r_io_desc_size (core->io, fh->desc), load_align);
+	}
 	if (!strcmp (suppress_warning, "false")) {
 		if (!map)
 			eprintf ("r_core_file_get_next_map: Unable to load specified file to 0x%08"PFMT64x"\n", loadaddr);
@@ -491,7 +498,7 @@ R_API RIOMap *r_core_file_get_next_map (RCore *core, RCoreFile * fh, int mode, u
 }
 
 
-R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int mode, ut64 loadaddr) {
+R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int flags, ut64 loadaddr) {
 	RList *list_fds = NULL;
 	RCoreFile *fh, *top_file = NULL;
 	RIODesc *fd;
@@ -501,7 +508,7 @@ R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int mode, ut6
 	int openmany = r_config_get_i (r->config, "file.openmany"), opened_count = 0;
 
 
-	list_fds = r_io_open_many (r->io, file, mode, 0644);
+	list_fds = r_io_open_many (r->io, file, flags, 0644);
 
 	const char *cp = NULL;
 	char *loadmethod = NULL;
@@ -533,11 +540,10 @@ R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int mode, ut6
 		fh->alive = 1;
 		fh->core = r;
 		fh->desc = fd;
-		fh->rwx = mode;
 		r->file = fh;
 		r->io->plugin = fd->plugin;
 		// XXX - load addr should be at a set offset
-		fh->map = r_core_file_get_next_map (r, fh, mode, current_loadaddr);
+		fh->map = r_core_file_get_next_map (r, fh, flags, current_loadaddr);
 
 		if (!fh->map) {
 			r_core_file_free(fh);
@@ -571,7 +577,7 @@ R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int mode, ut6
 	return top_file;
 }
 
-R_API RCoreFile *r_core_file_open(RCore *r, const char *file, int mode, ut64 loadaddr) {
+R_API RCoreFile *r_core_file_open(RCore *r, const char *file, int flags, ut64 loadaddr) {
 	const char *suppress_warning = r_config_get (r->config, "file.nowarn");
 	const int openmany = r_config_get_i (r->config, "file.openmany");
 	const char *cp;
@@ -582,20 +588,20 @@ R_API RCoreFile *r_core_file_open(RCore *r, const char *file, int mode, ut64 loa
 		return NULL;
 	if (!strcmp (file, "-")) {
 		file = "malloc://512";
-		mode = 4|2;
+		flags = 4|2;
 	}
 	r->io->bits = r->assembler->bits; // TODO: we need an api for this
-	fd = r_io_open_nomap (r->io, file, mode, 0644);
+	fd = r_io_open_nomap (r->io, file, flags, 0644);
 	if (fd == NULL && openmany > 2) {
 		// XXX - make this an actual option somewhere?
-		fh = r_core_file_open_many (r, file, mode, loadaddr);
+		fh = r_core_file_open_many (r, file, flags, loadaddr);
 		if (fh) return fh;
 	}
 	if (fd == NULL) {
-		if (mode & 2) {
+		if (flags & 2) {
 			if (!r_io_create (r->io, file, 0644, 0))
 				return NULL;
-			if (!(fd = r_io_open_nomap (r->io, file, mode, 0644)))
+			if (!(fd = r_io_open_nomap (r->io, file, flags, 0644)))
 				return NULL;
 		} else return NULL;
 	}
@@ -613,13 +619,12 @@ R_API RCoreFile *r_core_file_open(RCore *r, const char *file, int mode, ut64 loa
 	fh->alive = 1;
 	fh->core = r;
 	fh->desc = fd;
-	fh->rwx = mode;
 
 	cp = r_config_get (r->config, "cmd.open");
 	if (cp && *cp)
 		r_core_cmd (r, cp, 0);
 	r_config_set (r->config, "file.path", file);
-	fh->map = r_core_file_get_next_map (r, fh, mode, loadaddr);
+	fh->map = r_core_file_get_next_map (r, fh, flags, loadaddr);
 	if (!fh->map) {
 		r_core_file_free (fh);
 		fh = NULL;
@@ -646,16 +651,12 @@ R_API void r_core_file_free(RCoreFile *cf) {
 		res = r_core_files_free (cf->core, cf);
 	if (!res && cf->alive) {
 		// double free libr/io/io.c:70 performs free
-		cf->alive = 0;
 		RIO *io = (RIO*)(cf->desc ? cf->desc->io : NULL);
 
 		if (io && cf->map) r_io_map_del_all (io, cf->map->fd);
 		if (io) r_io_close ((RIO *) io, cf->desc);
-		cf->desc = NULL;
-		cf->map = NULL;
 
 		r_bin_file_deref_by_bind (&cf->binb);
-		memset (cf, 0, sizeof (RCoreFile));
 		free (cf);
 	}
 	cf = NULL;
@@ -713,12 +714,15 @@ R_API int r_core_file_list(RCore *core) {
 	RCoreFile *f;
 	RListIter *iter;
 	r_list_foreach (core->files, iter, f) {
-		if (f->map)
-			r_cons_printf ("%c %d %s @ 0x%"PFMT64x" ; %s\n",
+		if (f->map) {
+			int overlapped = r_io_map_overlaps (core->io, f->desc, f->map);
+			r_cons_printf ("%c %d %s @ 0x%"PFMT64x" ; %s size=%d %s\n",
 				core->io->raised == f->desc->fd?'*':'-',
 				f->desc->fd, f->desc->uri, f->map->from,
-				f->desc->flags & R_IO_WRITE? "rw": "r");
-		else r_cons_printf ("- %d %s\n", f->desc->fd, f->desc->uri);
+				f->desc->flags & R_IO_WRITE? "rw": "r",
+				r_io_desc_size (core->io, f->desc),
+				overlapped?"overlaps":"");
+		} else r_cons_printf ("- %d %s\n", f->desc->fd, f->desc->uri);
 		count++;
 	}
 	return count;

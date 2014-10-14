@@ -56,8 +56,11 @@ static int rtr_visual (RCore *core, TextLog T, const char *cmd) {
 	if (cmd) {
 		r_cons_break (NULL, NULL);
 		for (;;) {
+			char *ret;
 			r_cons_clear00 ();
-			r_cons_printf ("%s\n", rtrcmd (T, cmd));
+			ret = rtrcmd (T, cmd);
+			r_cons_printf ("%s\n", ret);
+			free (ret);
 			r_cons_flush ();
 			if (r_cons_singleton ()->breaked)
 				break;
@@ -65,9 +68,11 @@ static int rtr_visual (RCore *core, TextLog T, const char *cmd) {
 		}
 		r_cons_break_end ();
 	} else {
-		const char *cmds[] = { "px", "pd", "pxa", NULL };
+		const char *cmds[] = { "px", "pd", "pxa", "dr", "sr sp;pxa", NULL };
 		int cmdidx = 0;
 		char *ret, ch;
+		free (rtrcmd (T, "e scr.color=true"));
+		free (rtrcmd (T, "e scr.html=false"));
 		for (;;) {
 			r_cons_clear00 ();
 			ret = rtrcmd (T, cmds[cmdidx]);
@@ -102,6 +107,7 @@ TODO:
 				r_cons_clear00();
 				r_cons_printf ("Remote Visual keys:\n"
 				" hjkl : move\n"
+				" HJKL : move faster\n"
 				" +-*/ : change block size\n"
 				" pP   : rotate print modes\n"
 				" T    : enter TextLog chat console\n"
@@ -179,10 +185,25 @@ TODO:
 				}
 				break;
 			case '@': autorefresh = R_TRUE; break;
-			case 'j': free (rtrcmd (T, "s+16")); break;
+			case 'j': 
+				if (cmdidx==1) {
+					free (rtrcmd (T, "so")); break;
+				} else {
+					free (rtrcmd (T, "s+16")); break;
+				}
+				break;
 			case 'k': free (rtrcmd (T, "s-16")); break;
 			case 'h': free (rtrcmd (T, "s-1")); break;
 			case 'l': free (rtrcmd (T, "s+1")); break;
+			case 'J':
+				if (cmdidx==1) {
+					free (rtrcmd (T, "4so"));
+				} else {
+					free (rtrcmd (T, "s+32"));
+				} break;
+			case 'K': free (rtrcmd (T, "s-32")); break;
+			case 'H': free (rtrcmd (T, "s-2")); break;
+			case 'L': free (rtrcmd (T, "s+2")); break;
 			case 'T': rtr_textlog_chat (core, T); break;
 			case '+': free (rtrcmd (T, "b+1")); break;
 			case '*': free (rtrcmd (T, "b+16")); break;
@@ -317,6 +338,7 @@ typedef struct {
 	const char *path;
 } HttpThread;
 
+// return 1 on error
 static int r_core_rtr_http_run (RCore *core, int launch, const char *path) {
 	char buf[32];
 	RSocket *s;
@@ -365,7 +387,8 @@ static int r_core_rtr_http_run (RCore *core, int launch, const char *path) {
 		r_config_set (core->config, "cfg.sandbox", "true");
 	}
 	eprintf ("Starting http server...\n");
-	eprintf ("http://localhost:%d/\n", atoi (port));
+	eprintf ("open http://localhost:%d/\n", atoi (port));
+	eprintf ("r2 -C http://localhost:%d/cmd/\n", atoi (port));
 	core->http_up = R_TRUE;
 
 	ut64 newoff, origoff = core->offset;
@@ -613,7 +636,10 @@ static int r_core_rtr_http_run (RCore *core, int launch, const char *path) {
 }
 
 static int r_core_rtr_http_thread (RThread *th) {
-	HttpThread *ht = th->user;
+	HttpThread *ht;
+	if (!th) return R_FALSE;
+	ht = th->user;
+	if (!ht || !ht->core) return R_FALSE;
 	return r_core_rtr_http_run (ht->core, ht->launch, ht->path);
 }
 
@@ -793,12 +819,19 @@ R_API void r_core_rtr_add(RCore *core, const char *_input) {
 			char uri[1024], prompt[64];
 			int len;
 			char *str, *res, *ptr;
-			if (file[strlen (file)-1]=='/') {
+			int flen = strlen (file);
+			int is_visual = (file[flen-1]== 'V')?1:0;
+			int is_valid = (file[flen-(is_visual?2:1)] == '/')?1:0;
+			if (is_valid) {
 				TextLog T = { host, port, file };
-				for (;;) {
+				if (is_visual) {
+					file[flen-1] = 0; // remove V from url
+					rtr_visual (core, T, NULL);
+				}
 				snprintf (prompt, sizeof (prompt), "[http://%s:%s/%s]> ",
-					host, port, file);
-				r_line_set_prompt (prompt);
+						host, port, file);
+				for (;;) {
+					r_line_set_prompt (prompt);
 					str = r_line_readline ();
 					if (!str || !*str) break;
 					if (*str == 'q') break;
@@ -808,26 +841,25 @@ R_API void r_core_rtr_add(RCore *core, const char *_input) {
 						} else {
 							rtr_visual (core, T, NULL);
 						}
-					} else
-					if (!strcmp (str, "TT")) {
+					} else if (!strcmp (str, "TT")) {
 						rtr_textlog_chat (core, T);
 					} else {
-					ptr = r_str_uri_encode (str);
-					if (ptr) str = ptr;
-					snprintf (uri, sizeof (uri), "http://%s:%s/%s%s",
-						host, port, file, str);
-					if (ptr == str) free (ptr);
-					str = r_socket_http_get (uri, NULL, &len);
-					if (str) {
-						str[len] = 0;
-						res = strstr (str, "\n\n");
-						if (res) res = strstr (res+1, "\n\n");
-						if (res) res += 2; else res = str;
-						printf ("%s%s", res, (res[strlen (res)-1]=='\n')?"":"\n");
-						r_line_hist_add (str);
-						free (str);
+						ptr = r_str_uri_encode (str);
+						if (ptr) str = ptr;
+						snprintf (uri, sizeof (uri), "http://%s:%s/%s%s",
+								host, port, file, str);
+						if (ptr == str) free (ptr);
+						str = r_socket_http_get (uri, NULL, &len);
+						if (str) {
+							str[len] = 0;
+							res = strstr (str, "\n\n");
+							if (res) res = strstr (res+1, "\n\n");
+							if (res) res += 2; else res = str;
+							printf ("%s%s", res, (res[strlen (res)-1]=='\n')?"":"\n");
+							r_line_hist_add (str);
+							free (str);
+						}
 					}
-}
 				}
 				r_socket_free (fd);
 				return;

@@ -44,13 +44,15 @@ static void r_core_file_info (RCore *core, int mode) {
 	if (cf && mode == R_CORE_BIN_JSON) {
 		r_cons_printf ("\"file\":\"%s\"", fn);
 		if (dbg) dbg = R_IO_WRITE | R_IO_EXEC;
-		if (cf->desc)
+		if (cf->desc) {
 			r_cons_printf (",\"fd\":%d", cf->desc->fd);
-		r_cons_printf (",\"size\":%"PFMT64d, r_io_desc_size (core->io, cf->desc));
-		r_cons_printf (",\"mode\":\"%s\"", r_str_rwx_i (
-			cf->rwx | dbg));
+			r_cons_printf (",\"size\":%"PFMT64d, r_io_desc_size (core->io, cf->desc));
+			r_cons_printf (",\"mode\":\"%s\"", r_str_rwx_i (
+				cf->desc->flags & 7 ));
+		}
 		r_cons_printf (",\"block\":%d", core->blocksize);
-		r_cons_printf (",\"uri\":\"%s\"", cf->desc->uri);
+		if (cf->desc)
+			r_cons_printf (",\"uri\":\"%s\"", cf->desc->uri);
 		if (binfile) {
 			if (binfile->curxtr)
 				r_cons_printf (",\"packet\":\"%s\"",
@@ -64,11 +66,14 @@ static void r_core_file_info (RCore *core, int mode) {
 		//r_cons_printf ("# Core file info\n");
 		r_cons_printf ("file\t%s\n", fn);
 		if (dbg) dbg = R_IO_WRITE | R_IO_EXEC;
-		r_cons_printf ("fd\t%d\n", cf->desc->fd);
-		r_cons_printf ("size\t0x%"PFMT64x"\n", r_io_desc_size (core->io, cf->desc));
-		r_cons_printf ("mode\t%s\n", r_str_rwx_i (cf->rwx | dbg));
+		if (cf->desc) {
+			r_cons_printf ("fd\t%d\n", cf->desc->fd);
+			r_cons_printf ("size\t0x%"PFMT64x"\n", r_io_desc_size (core->io, cf->desc));
+			r_cons_printf ("mode\t%s\n", r_str_rwx_i (cf->desc->flags & 7 ));
+		}
 		r_cons_printf ("block\t0x%x\n", core->blocksize);
-		r_cons_printf ("uri\t%s\n", cf->desc->uri);
+		if (cf->desc)
+			r_cons_printf ("uri\t%s\n", cf->desc->uri);
 		if (binfile && binfile->curxtr)
 			r_cons_printf ("packet\t%s\n",
 				binfile->curxtr->name);

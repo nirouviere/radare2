@@ -346,6 +346,31 @@ static int cb_dbgbep(void *user, void *data) {
 	}
 	return R_TRUE;
 }
+
+static int cb_dbg_forks(void *user, void *data) {
+	RCore *core = (RCore*) user;
+	RConfigNode *node = (RConfigNode*) data;
+	core->dbg->trace_forks = node->i_value;
+	r_debug_attach (core->dbg, core->dbg->pid);
+	return R_TRUE;
+}
+
+static int cb_dbg_execs(void *user, void *data) {
+	RCore *core = (RCore*) user;
+	RConfigNode *node = (RConfigNode*) data;
+	core->dbg->trace_execs = node->i_value;
+	r_debug_attach (core->dbg, core->dbg->pid);
+	return R_TRUE;
+}
+
+static int cb_dbg_clone(void *user, void *data) {
+	RCore *core = (RCore*) user;
+	RConfigNode *node = (RConfigNode*) data;
+	core->dbg->trace_clone = node->i_value;
+	r_debug_attach (core->dbg, core->dbg->pid);
+	return R_TRUE;
+}
+
 static int cb_runprofile(void *user, void *data) {
 	RCore *r = (RCore*) user;
 	RConfigNode *node = (RConfigNode*) data;
@@ -708,7 +733,7 @@ static int cb_binminstr(void *user, void *data) {
 static int cb_searchin(void *user, void *data) {
  	RConfigNode *node = (RConfigNode*) data;
  	if (*node->value == '?') {
- 		r_cons_printf ("raw\nblock\nfile\nsection\n");
+ 		r_cons_printf ("raw\nblock\nfile\nsection\nmaps\nmaprange\n");
  		return R_FALSE;
  	}
  	return R_TRUE;
@@ -732,10 +757,10 @@ R_API int r_core_config_init(RCore *core) {
 	cfg->num = core->num;
 
 	/* anal */
-	SETI("anal.depth", 50, "Max depth at code analysis"); // XXX: warn if depth is > 50 .. can be problematic
+	SETI("anal.depth", 16, "Max depth at code analysis"); // XXX: warn if depth is > 50 .. can be problematic
 	SETPREF("anal.hasnext", "true", "Continue analysis after each function");
 	SETPREF("anal.esil", "false", "Use the new ESIL code analysis");
-	SETCB("anal.nopskip", "true", &cb_analnopskip, "Skip nops at the begining of functions");
+	SETCB("anal.nopskip", "false", &cb_analnopskip, "Skip nops at the begining of functions");
 	SETCB("anal.arch", R_SYS_ARCH, &cb_analarch, "Specify the anal.arch to use");
 	SETCB("anal.cpu", R_SYS_ARCH, &cb_analcpu, "Specify the anal.cpu to use");
 	SETPREF("anal.prelude", "", "Specify an hexpair to find preludes in code");
@@ -838,10 +863,14 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF("dir.types", "/usr/include", "Default path to look for cparse type files");
 	SETPREF("dir.projects", "~/"R2_HOMEDIR"/projects", "Default path for projects");
 
+	SETPREF("stack.bytes", "false", "Show bytes instead of values in stack");
 	SETPREF("stack.anotated", "false", "Show anotated hexdump in visual debug");
 	SETI("stack.size", 64,  "Define size of anotated hexdump in visual debug");
 	SETI("stack.delta", 0,  "Define a delta for the stack dump");
 
+	SETCB("dbg.forks", "true", &cb_dbg_forks, "Stop execution if fork() is done");
+	SETCB("dbg.clone", "false", &cb_dbg_clone, "Stop execution if new thread is created");
+	SETCB("dbg.execs", "false", &cb_dbg_execs, "Stop execution if new thread is created");
 	SETCB("dbg.profile", "", &cb_runprofile, "Path to RRunProfile file");
 	/* debug */
 	SETCB("dbg.status", "false", &cb_dbgstatus, "Set cmd.prompt to '.dr*' or '.dr*;drd;sr pc;pi 1;s-'");
@@ -865,21 +894,17 @@ R_API int r_core_config_init(RCore *core) {
 	/* cmd */
 	if (r_file_exists ("/usr/bin/xdot"))
 		r_config_set (cfg, "cmd.graph", "!xdot a.dot");
-	else
-		if (r_file_exists ("/usr/bin/open"))
-			r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!open a.gif");
-		else
-			if (r_file_exists ("/usr/bin/gqview"))
-				r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!gqview a.gif");
-			else
-				if (r_file_exists ("/usr/bin/eog"))
-					r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!eog a.gif");
-				else
-					if (r_file_exists ("/usr/bin/xdg-open"))
-						r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!xdg-open a.gif");
-					else
-						r_config_set (cfg, "cmd.graph", "?e cannot find a valid picture viewer");
+	else if (r_file_exists ("/usr/bin/open"))
+		r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!open a.gif");
+	else if (r_file_exists ("/usr/bin/gqview"))
+		r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!gqview a.gif");
+	else if (r_file_exists ("/usr/bin/eog"))
+		r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!eog a.gif");
+	else if (r_file_exists ("/usr/bin/xdg-open"))
+		r_config_set (cfg, "cmd.graph", "!dot -Tgif -oa.gif a.dot;!xdg-open a.gif");
+	else r_config_set (cfg, "cmd.graph", "?e cannot find a valid picture viewer");
 	r_config_desc (cfg, "cmd.graph", "Command executed by 'agv' command to view graphs");
+	SETPREF("cmd.xterm", "xterm -bg black -fg gray -e", "xterm command to spawn with V@");
 	SETICB("cmd.depth", 10, &cb_cmddepth, "Maximum command depth");
 	SETPREF("cmd.bp", "", "Command to executed every breakpoint hit");
 	SETPREF("cmd.stack", "", "Command to display the stack in visual debug mode");
@@ -961,7 +986,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF("scr.responsive", "false", "Auto-adjust Visual depending on screen (disable asm.bytes and other)");
 #endif
 	SETPREF("scr.wheel", "true", "Enable the use of mouse wheel in visual mode");
-	SETI("scr.colpos", 80, "Column position of cmd.cprompt in visual");
+	// DEPRECATED: USES hex.cols now SETI("scr.colpos", 80, "Column position of cmd.cprompt in visual");
 	SETICB("scr.columns", 0, &cb_scrcolumns, "Set the columns number");
 	SETICB("scr.rows", 0, &cb_rows, "Force specific console rows (height)");
 	SETCB("scr.fps", "false", &cb_fps, "Show FPS indicator in Visual");
@@ -1003,6 +1028,7 @@ R_API int r_core_config_init(RCore *core) {
 	/* search */
 	SETCB("search.contiguous", "true", &cb_contiguous, "Accept contiguous/adjacent search hits");
 	SETICB("search.align", 0, &cb_searchalign, "Only catch aligned search hits");
+	SETI("search.chunk", 0, "Chunk size for /+ (default size is asm.bits/8");
 	SETI("search.count", 0, "Start index number at search hits");
 	SETI("search.distance", 0, "Search string distance");
 	SETPREF("search.flags", "true", "If enabled all search results are flagged, else just printed r2 commands");
@@ -1013,6 +1039,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETI("search.roplen", 5, "Maximum number of instructions for a ROP Gadget");
 	SETPREF("search.show", "true", "Show search results while found (disable if lot of hits)");
 	SETI("search.to", -1, "Search end address");
+	SETPREF("search.conditionalrop", "false", "Use conditional jump, calls and returns for ropsearch too");
 
 	/* io */
 	SETICB("io.enforce", 0, &cb_ioenforce, "Honor IO section permissions for 1=read , 2=write, 0=none");
@@ -1025,7 +1052,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB("io.va", "true", &cb_iova, "If enabled virtual address layout can be used");
 	SETCB("io.zeromap", "0", &cb_iozeromap, "Double map the last opened file to address zero");
 	SETCB("io.autofd", "true", &cb_ioautofd, "change fd when opening new file automatically");
-	
+
 	/* file */
 	SETPREF("file.analyze", "false", "Analyze file on load. Same as r2 -c aa ..");
 	SETPREF("file.desc", "", "User defined file description. Used by projects");

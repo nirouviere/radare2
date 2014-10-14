@@ -92,6 +92,8 @@ static void visual_help() {
 	" @        set cmd.vprompt to run commands before the visual prompt\n"
 	" !        run r2048 game\n"
 	" _        enter the hud\n"
+	" =        set cmd.vprompt (top row)\n"
+	" |        set cmd.cprompt (right column)\n"
 	" .        seek to program counter\n"
 	" /        in cursor mode search in current block\n"
 	" :cmd     run radare command\n"
@@ -159,6 +161,9 @@ R_API void r_core_visual_prompt_input (RCore *core) {
 	eprintf ("Press <enter> to return to Visual mode.\n");
 	ut64 addr = core->offset;
 	ut64 bsze = core->blocksize;
+
+	r_cons_show_cursor (R_TRUE);
+	core->vmode = R_FALSE;
 	ut64 newaddr = addr;
 	if (curset) {
 		if (ocursor != -1) {
@@ -180,6 +185,8 @@ R_API void r_core_visual_prompt_input (RCore *core) {
 			r_core_block_size (core, bsze);
 		}
 	}
+	r_cons_show_cursor (R_FALSE);
+	core->vmode = R_TRUE;
 }
 
 R_API int r_core_visual_prompt (RCore *core) {
@@ -596,7 +603,7 @@ R_API int r_core_visual_cmd(RCore *core, int ch) {
 		}
 		break;
 	case 'a':
-		if (core->file && !(core->file->rwx & 2)) {
+		if (core->file && core->file->desc && !(core->file->desc->flags & 2)) {
 			r_cons_printf ("\nFile has been opened in read-only mode. Use -w flag\n");
 			r_cons_any_key ();
 			return R_TRUE;
@@ -616,6 +623,32 @@ R_API int r_core_visual_cmd(RCore *core, int ch) {
 		showcursor (core, R_FALSE);
 		r_cons_set_raw (R_TRUE);
 		break;
+	case '=':
+		{ // TODO: edit
+		char *buf = NULL;
+#define I core->cons
+		const char *cmd = r_config_get (core->config, "cmd.vprompt");
+		r_line_set_prompt ("cmd.vprompt> ");
+		I->line->contents = strdup (cmd);
+		buf = r_line_readline ();
+//		if (r_cons_fgets (buf, sizeof (buf)-4, 0, NULL) <0) buf[0]='\0';
+		I->line->contents = NULL;
+		r_config_set (core->config, "cmd.vprompt", buf);
+		}
+		break;
+	case '|':
+		{ // TODO: edit
+		char *buf = NULL;
+#define I core->cons
+		const char *cmd = r_config_get (core->config, "cmd.cprompt");
+		r_line_set_prompt ("cmd.cprompt> ");
+		I->line->contents = strdup (cmd);
+		buf = r_line_readline ();
+//		if (r_cons_fgets (buf, sizeof (buf)-4, 0, NULL) <0) buf[0]='\0';
+		I->line->contents = NULL;
+		r_config_set (core->config, "cmd.cprompt", buf);
+		}
+		break;
 	case '!':
 		r_cons_2048 ();
 		break;
@@ -634,7 +667,22 @@ R_API int r_core_visual_cmd(RCore *core, int ch) {
 		setcursor (core, curset?0:1);
 		break;
 	case '@':
-		r_core_cmd0 (core, "?i vmprompt;\"e cmd.vprompt=`?y`\"");
+#if __UNIX__ && !__APPLE__
+		{
+		int port = r_config_get_i (core->config, "http.port");
+		if (!r_core_rtr_http (core, '&', NULL)) {
+			const char *xterm = r_config_get (core->config, "cmd.xterm");
+			// TODO: this must be configurable
+			r_sys_cmdf ("%s 'r2 -C http://localhost:%d/cmd/V;sleep 1' &", xterm, port);
+			//xterm -bg black -fg gray -e 'r2 -C http://localhost:%d/cmd/;sleep 1' &", port);
+		} else {
+			r_cons_any_key ();
+		}
+		}
+#else
+		eprintf ("Unsupported on this platform\n");
+		r_cons_any_key ();
+#endif
 		break;
 	case 'C':
 		color = color? 0: 1;
@@ -698,7 +746,7 @@ R_API int r_core_visual_cmd(RCore *core, int ch) {
 		break;
 	case 'i':
 	case 'I':
-		if (core->file && !(core->file->rwx & 2)) {
+		if (core->file && core->file->desc &&!(core->file->desc->flags & 2)) {
 			r_cons_printf ("\nFile has been opened in read-only mode. Use -w flag\n");
 			r_cons_any_key ();
 			return R_TRUE;
@@ -1386,11 +1434,22 @@ static void r_core_visual_refresh (RCore *core) {
 	if (vi && *vi) {
 		// XXX: slow
 		cons->blankline = R_FALSE;
-		r_cons_printf ("[cmd.cprompt=%s]\n", vi);
-		r_core_cmd (core, vi, 0);
-		r_cons_column (r_config_get_i (core->config, "scr.colpos"));
-		r_core_visual_title (core, color);
+		r_cons_clear00 ();
 		r_cons_flush ();
+		{
+		       int hc = r_config_get_i (core->config, "hex.cols");
+		       int nw = 12 + 4 + hc + (hc*3);
+		       if (nw>w) {
+				// do not show column contents
+			} else {
+				r_cons_printf ("[cmd.cprompt=%s]\n", vi);
+				r_core_cmd0 (core, vi);
+				r_cons_column (nw);
+				r_cons_flush ();
+			}
+		}
+		r_cons_gotoxy (0, 0);
+		r_core_visual_title (core, color);
 		vi = r_config_get (core->config, "cmd.vprompt");
 		if (vi) r_core_cmd (core, vi, 0);
 	} else {
@@ -1452,18 +1511,29 @@ R_API int r_core_visual(RCore *core, const char *input) {
 			static char debugstr[512];
 			const char *cmdvhex = r_config_get (core->config, "cmd.stack");
 			const int pxa = r_config_get_i (core->config, "stack.anotated"); // stack.anotated
-			const int size = r_config_get_i (core->config, "stack.size"); // stack.size
-			const int delta = r_config_get_i (core->config, "stack.delta"); // stack.delta
+			const int size = r_config_get_i (core->config, "stack.size");
+			const int delta = r_config_get_i (core->config, "stack.delta");
+			const int bytes = r_config_get_i (core->config, "stack.bytes");
 			if (cmdvhex && *cmdvhex) {
 				snprintf (debugstr, sizeof(debugstr),
 					"f tmp;sr sp;%s;dr=;s-;"
 					"s tmp;f-tmp;pd $r", cmdvhex);
 				debugstr[sizeof(debugstr)-1]=0;
 			} else {
+				const char *pxw;
+				if (bytes) {
+					pxw = "px";
+				} else {
+					switch (core->assembler->bits) {
+					case 64: pxw = "pxq"; break;
+					case 32: pxw = "pxw"; break;
+					default: pxw = "px"; break;
+					}
+				}
 				snprintf (debugstr, sizeof(debugstr),
 					"f tmp;sr sp;%s %d@$$-%d;dr=;s-;"
 					"s tmp;f-tmp;pd $r",
-					pxa?"pxa":"pxw", size,
+					pxa?"pxa":pxw, size,
 					delta);
 			}
 			printfmt[2] = debugstr;
